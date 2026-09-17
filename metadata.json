@@ -1,0 +1,8 @@
+{
+  "name": "Testeria",
+  "description": "AI-powered Backend & API Test Automation Hub for NestJS, Next.js, and multi-stack APIs with autonomous AI exploration, test suite generation, and developer diagnostics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
