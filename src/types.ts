@@ -1,189 +1,138 @@
-export type TechStack = 'nestjs' | 'nextjs' | 'vue' | 'php' | 'other';
+// ─── Domain types (shared by server & frontend) ────────────────────────────
 
-export type TestCaseCategory =
-  | 'happy_path'
-  | 'negative_validation'
-  | 'auth_security'
-  | 'boundary_edge'
-  | 'chained_flow';
+export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 
 export interface Endpoint {
   id: string;
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  method: Method;
+  /** Path with :param placeholders, e.g. /api/orders/:id */
   path: string;
   summary: string;
   description?: string;
   tags?: string[];
+  /** query param name -> type description */
+  querySchema?: Record<string, string>;
+  /** sample / example request body */
+  bodySchema?: any;
   headers?: Record<string, string>;
-  queryParams?: Array<{ name: string; type: string; required: boolean; default?: string }>;
-  requestBodySchema?: any;
-  responseSchemaSample?: any;
-  sourceSnippet?: string; // e.g. NestJS @Controller snippet
 }
 
-export interface ChainedContext {
-  sourceTestCaseId?: string;
-  extractResponseKey?: string; // e.g. "accessToken" or "data.id"
-  injectIntoHeader?: string;   // e.g. "Authorization" (Bearer {{val}})
-  injectIntoParam?: string;    // e.g. ":id"
-  injectIntoBodyKey?: string;  // e.g. "userId"
-  extractions?: Array<{ key: string; fromPath: string }>;
-  injections?: Array<{ target: 'header' | 'param' | 'body'; key: string; valueTemplate: string }>;
+export interface Extraction {
+  /** context variable name to store the value under, e.g. "accessToken" */
+  key: string;
+  from: 'status' | 'body' | 'text' | 'page';
+  /** dot path into the value, e.g. "data.0.id" (body), or 'url' for from:'page' */
+  path?: string;
 }
 
-export interface TestStep {
+export interface Expectation {
+  /** API: acceptable HTTP status codes */
+  status?: number[];
+  /** API: substrings that must appear in the response body */
+  bodyContains?: string[];
+  /** UI: selector must be visible / hidden when the step finishes */
+  selector?: string;
+  selectorState?: 'visible' | 'hidden';
+}
+
+export type UiAction =
+  | { kind: 'goto'; url: string }
+  | { kind: 'click'; selector: string }
+  | { kind: 'fill'; selector: string; value: string }
+  | { kind: 'press'; key: string }
+  | { kind: 'wait'; ms: number }
+  | { kind: 'assertText'; selector: string; contains: string }
+  | { kind: 'screenshot'; name?: string };
+
+export interface FlowStep {
   id: string;
+  type: 'api' | 'ui';
+  name: string;
+  // ── API steps ──
+  endpointId?: string;
+  method?: Method;
+  path?: string;
+  headers?: Record<string, string>;
+  body?: any;
+  // ── UI steps ──
+  actions?: UiAction[];
+  // ── shared ──
+  extract?: Extraction[];
+  expect?: Expectation;
+}
+
+export type BranchThen = 'retry' | 'continue' | 'abort';
+
+/**
+ * Recovery sub-flow. When a step fails and the branch matches
+ * (trigger step + condition), its steps run first, then `then` decides
+ * what happens to the failed step.
+ */
+export interface ErrorBranch {
+  id: string;
+  name: string;
+  /** step the branch watches; undefined = any failing step */
+  triggerStepId?: string;
+  /** API: HTTP statuses that activate this branch */
+  whenStatus?: number[];
+  /** substring match on response body / error message */
+  whenContains?: string;
+  steps: FlowStep[];
+  then: BranchThen;
+}
+
+export interface Flow {
+  id: string;
+  projectId: string;
   name: string;
   description?: string;
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-  path: string;
-  headers?: Record<string, string>;
-  queryParams?: Record<string, string>;
-  body?: any;
-  assertions: {
-    expectedStatuses: number[];
-    requiredBodyKeys?: string[];
-    schemaValidations?: string[];
-    forbiddenBodyKeys?: string[];
-    maxLatencyMs?: number;
-  };
-  chainedContext?: ChainedContext;
-}
-
-export interface TestCase {
-  id: string;
-  endpointId: string;
-  name: string;
-  category: TestCaseCategory;
-  description: string;
-  folderPath?: string; // e.g. "/Auth Module/Login", "/Order Fulfillment/E2E Checkout"
-  dependsOn?: string[]; // IDs of prerequisite test cases that must succeed before this test
-  stepNumber?: number; // Ordering for E2E flows
-  request: {
-    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-    path: string;
-    headers?: Record<string, string>;
-    queryParams?: Record<string, string>;
-    body?: any;
-  };
-  assertions: {
-    expectedStatuses: number[];
-    requiredBodyKeys?: string[];
-    schemaValidations?: string[];
-    forbiddenBodyKeys?: string[];
-    maxLatencyMs?: number;
-  };
-  chainedContext?: ChainedContext;
-  steps?: TestStep[]; // Sequential steps for multi-step / E2E pipeline workflows
-}
-
-export interface AssertionResult {
-  name: string;
-  passed: boolean;
-  message: string;
-  actual?: any;
-  expected?: any;
-}
-
-export interface AiDiagnosis {
-  rootCause: string;
-  backendContext: string; // e.g., NestJS ValidationPipe or JwtAuthGuard issue
-  suggestedFix: string;
-  sampleCodeFix?: string;
-}
-
-export interface ExecutionLogEntry {
-  time: string;
-  level: 'info' | 'warn' | 'error' | 'pass' | 'step';
-  message: string;
-  details?: any;
-}
-
-export interface TestRunExecution {
-  id: string;
-  testCaseId: string;
-  endpointId: string;
-  testCaseName: string;
-  category: TestCaseCategory;
-  folderPath?: string;
-  status: 'passed' | 'failed' | 'running';
-  httpStatus: number;
-  latencyMs: number;
-  requestSent: {
-    method: string;
-    url: string;
-    headers: Record<string, string>;
-    body?: any;
-  };
-  responseReceived: {
-    status: number;
-    statusText: string;
-    headers: Record<string, string>;
-    body: any;
-  };
-  assertionResults: AssertionResult[];
-  extractedVariables?: Record<string, any>;
-  logs?: ExecutionLogEntry[];
-  aiDiagnosis?: AiDiagnosis;
-  timestamp: number;
-}
-
-export interface TestSuiteReport {
-  id: string;
-  projectId: string;
-  runAt: number;
-  totalTests: number;
-  passed: number;
-  failed: number;
-  passRate: number;
-  avgLatencyMs: number;
-  p95LatencyMs: number;
-  maxLatencyMs: number;
-  statusDistribution: Record<string, number>;
-  runs: TestRunExecution[];
-  summaryNotes?: string;
-}
-
-export interface ExplorationProbeStep {
-  stepNumber: number;
-  name: string;
-  method: string;
-  path: string;
-  intent: string;
-  payloadSent?: any;
-  httpStatus: number;
-  latencyMs: number;
-  findingType: 'clean' | 'anomaly' | 'vulnerability' | 'edge_case_fail';
-  findingDetail: string;
-}
-
-export interface ExplorationSession {
-  id: string;
-  projectId: string;
-  timestamp: number;
-  status: 'idle' | 'running' | 'completed' | 'failed';
-  totalProbes: number;
-  anomaliesFound: number;
-  vulnerabilitiesFound: number;
-  healthScore: number; // 0-100
-  steps: ExplorationProbeStep[];
-  aiExecutiveSummary: string;
-  actionableRecommendations: string[];
+  steps: FlowStep[];
+  errorBranches: ErrorBranch[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface Project {
   id: string;
   name: string;
-  description: string;
-  stack: TechStack;
+  /** base URL for API steps, e.g. http://localhost:4000 */
   baseUrl: string;
-  defaultHeaders: Record<string, string>;
-  envVars: Record<string, string>;
-  endpoints: Endpoint[];
-  testCases: TestCase[];
-  latestReport?: TestSuiteReport;
-  reportsHistory?: TestSuiteReport[];
-  latestExploration?: ExplorationSession;
+  /** base URL for UI steps (web app under test) */
+  uiBaseUrl?: string;
   createdAt: number;
   updatedAt: number;
+}
+
+// ─── Run results ───────────────────────────────────────────────────────────
+
+export interface StepResult {
+  stepId: string;
+  name: string;
+  type: 'api' | 'ui' | 'branch';
+  status: 'passed' | 'failed' | 'skipped';
+  httpStatus?: number;
+  latencyMs?: number;
+  message: string;
+  /** response body / error text (truncated) */
+  detail?: string;
+  /** inline screenshot (data URL), captured on UI failures or explicit screenshot actions */
+  screenshot?: string;
+  /** branch results nested under the step that triggered them */
+  branchResults?: StepResult[];
+  /** true when the step passed after an error-branch retry */
+  retried?: boolean;
+}
+
+export interface RunRecord {
+  id: string;
+  projectId: string;
+  flowId: string;
+  flowName: string;
+  status: 'passed' | 'failed';
+  startedAt: number;
+  durationMs: number;
+  steps: StepResult[];
+  /** URL of the recorded video (only when record=true and the flow had UI steps) */
+  videoPath?: string;
+  error?: string;
 }
