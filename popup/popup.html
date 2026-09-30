@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <title>Testeria</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="brand">
+      <span class="logo">▲</span>
+      <span class="title">Testeria</span>
+    </div>
+    <div class="header-actions">
+      <button id="import-btn" class="btn btn-ghost" title="Import recording dari file JSON">Import</button>
+      <input id="import-file" type="file" accept="application/json,.json" hidden />
+    </div>
+  </header>
+
+  <div id="status" class="status" hidden></div>
+
+  <main id="list" class="list" aria-label="Daftar recording"></main>
+
+  <div id="empty" class="empty" hidden>
+    <p>Belum ada recording.</p>
+    <p class="hint">Buka halaman web, tekan <kbd>F8</kbd> atau <kbd>Ctrl+Shift+Y</kbd> untuk mulai merekam, tekan lagi untuk berhenti.</p>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-left">
+      <button id="export-all-btn" class="btn btn-ghost" title="Unduh semua recording sebagai JSON">Export All</button>
+      <span id="ext-version" class="version" title="Versi Testeria"></span>
+    </div>
+    <span id="replay-progress" class="progress" hidden></span>
+  </footer>
+
+  <script src="../shared/util.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
