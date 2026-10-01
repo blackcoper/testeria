@@ -300,6 +300,7 @@
       current: replay.status === "done" ? null : replay.index,
       total: replay.total || 0,
       labels: replay.labels || [],
+      types: replay.types || [],
       error: replay.error,
       failedStep: typeof replay.failedStep === "number" ? replay.failedStep : null,
       notice: replay.notice || null,

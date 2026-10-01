@@ -98,10 +98,40 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     return el && el.tagName === "INPUT" && (el.type || "").toLowerCase() === "password";
   }
 
-  function valueFor(el) {
-    if (isPassword(el)) return { value: "<masked>", masked: true };
+  function valueFor(el, noMask) {
+    if (!noMask && isPassword(el)) return { value: "<masked>", masked: true };
     var v = el.value == null ? "" : String(el.value);
     return { value: v, masked: false };
+  }
+
+  /**
+   * Mode assertion default untuk elemen (Alt+Click = "pastikan elemen ini…"):
+   *   checkbox/radio → "checked"  |  input/textarea/select → "value"
+   *   elemen lain → "text" (mengandung teks yang terlihat saat ini).
+   * Nilai password TIDAK pernah terekam — di-mask dengan aturan yang sama
+   * dengan step input biasa.
+   */
+  function assertionFor(el) {
+    var sel = selectorFor(el);
+    var step = { type: "assert", selector: sel, url: null };
+    var tag = el.tagName;
+    if (tag === "INPUT" && (el.type === "checkbox" || el.type === "radio")) {
+      // Chrome/Firefox PRE-TOGGLE checkedness checkbox/radio SELAMA dispatch
+      // klik lalu mengembalikannya bila preventDefault (legacy-canceled
+      // activation) — di DALAM listener el.checked = KEBALIKAN yang dilihat
+      // user. Kita selalu preventDefault → balikkan saat capture.
+      step.assertMode = "checked";
+      step.value = el.checked ? "unchecked" : "checked";
+    } else if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+      var v = valueFor(el, false);
+      step.assertMode = "value";
+      step.value = v.value;
+      step.masked = v.masked;
+    } else {
+      step.assertMode = "text";
+      step.value = String(el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120);
+    }
+    return step;
   }
 
   function selectorFor(el) {
@@ -176,6 +206,19 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     if (!el || el.nodeType !== 1) return;
     // Flush input yang masih menunggu debounce supaya urutan step benar.
     if (isEditable(el)) flushInput(el);
+    // Alt+Click = tulis ASSERTION ("pastikan elemen ini…"), bukan aksi klik.
+    // Kliknya DITELAN: tanpa ini Alt+Click di link bernavigasi, di checkbox
+    // toggles, di tombol mengeksekusi — assertion tidak boleh mengubah halaman.
+    // Capture SINKRON (bukan setTimeout): state yang dilihat user ada SEKARANG
+    // (untuk checkbox lihat pre-toggle di assertionFor); deferral bisa kalah
+    // balapan dengan stop-toggle yang menonaktifkan recording lebih dulu.
+    if (e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      sendStep(assertionFor(el));
+      return;
+    }
     var step = {
       type: "click",
       selector: selectorFor(el),

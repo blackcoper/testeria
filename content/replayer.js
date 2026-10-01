@@ -305,6 +305,81 @@ var replayer = (globalThis.TESTERIA_REPLAYER = globalThis.TESTERIA_REPLAYER || {
   }
 
   // ---------------------------------------------------------------------------
+  /**
+   * Eksekusi step ASSERTION: verifikasi kondisi elemen TANPA mengubah
+   * halaman. Mode (recorder menurunkannya dari jenis elemen):
+   *   text   → innerText mengandung `value` (case-insensitive)
+   *   value  → nilai input/textarea/select === `value` (step masked =
+   *            password: cukup pastikan field TERISI — nilai asli tak disimpan)
+   *   checked→ checkbox/radio dalam keadaan `value` ("checked"/"unchecked")
+   *   visible→ elemen ada dan terlihat
+   * Element di-polling sampai kondisi terpenuhi / timeout — assertion yang
+   * menunggu render lambat TETAP lolos, assertion yang salah GAGAL eksplisit
+   * dengan expected/actual (bukan error element-hilang yang menyesatkan).
+   * Return { ok: true, assertPass: true } atau { ok: false, error }.
+   */
+  replayer.executeAssertion = async function (step) {
+    var mode = step.assertMode || "text";
+    var expected = step.value == null ? "" : String(step.value);
+    var started = Date.now();
+    while (true) {
+      var resolved = await resolveElement(step.selector);
+      if (resolved) {
+        var el = resolved.el;
+        var actual = null;
+        var pass = false;
+        if (mode === "visible") {
+          pass = isVisible(el);
+          actual = pass ? "visible" : "hidden";
+        } else if (mode === "value") {
+          actual = el.value == null ? "" : String(el.value);
+          if (step.masked) {
+            // Password: nilai asli tidak pernah disimpan ("<masked>") —
+            // satu-satunya semantik yang masuk akal: field harus TERISI.
+            pass = actual.length > 0;
+            expected = "***";
+          } else {
+            pass = actual === expected;
+          }
+        } else if (mode === "checked") {
+          actual = el.checked ? "checked" : "unchecked";
+          pass = actual === expected;
+        } else {
+          // text: innerText mengandung expected (case-insensitive, whitespace
+          // dinormalisasi — markup multi-baris tidak boleh menggagalkan).
+          actual = String(el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
+          pass = actual.toLowerCase().indexOf(expected.toLowerCase()) !== -1;
+        }
+        if (pass) return { ok: true, assertPass: true };
+        if (Date.now() - started >= POLL_TIMEOUT_MS) {
+          return {
+            ok: false,
+            error:
+              "assertion gagal (mode " + mode + "): diharapkan '" +
+              String(expected).slice(0, 60) +
+              "', aktual '" +
+              String(actual).slice(0, 60) +
+              "'"
+          };
+        }
+      } else if (Date.now() - started >= POLL_TIMEOUT_MS) {
+        return {
+          ok: false,
+          error:
+            "assertion gagal: element tidak ketemu setelah " +
+            POLL_TIMEOUT_MS / 1000 +
+            " detik (selector dicoba: " +
+            collectTried(step.selector) +
+            ")"
+        };
+      }
+      await new Promise(function (r) {
+        setTimeout(r, POLL_INTERVAL_MS);
+      });
+    }
+  };
+
+  // ---------------------------------------------------------------------------
   // Eksekusi step
   // ---------------------------------------------------------------------------
 
@@ -317,6 +392,14 @@ var replayer = (globalThis.TESTERIA_REPLAYER = globalThis.TESTERIA_REPLAYER || {
   replayer.executeStep = async function (step) {
     if (!step || typeof step.type !== "string") {
       return { ok: false, error: "step tidak valid" };
+    }
+
+    // ----------------------------- assert -----------------------------
+    // Assertion DIKENDALIKAN SEBELUM blok visible-poll: mode "visible"
+    // justru MENGHARAPKAN elemen hidden (mis. spinner hilang) — polling
+    // "harus visible" di bawah akan menggagalkannya sebelum sempat dicek.
+    if (step.type === "assert") {
+      return replayer.executeAssertion(step);
     }
 
     // ----------------------------- navigate -----------------------------
@@ -467,6 +550,7 @@ var replayer = (globalThis.TESTERIA_REPLAYER = globalThis.TESTERIA_REPLAYER || {
       }
 
       default:
+        // "assert" tidak pernah sampai sini — ditangani sebelum blok polling.
         return { ok: false, error: "tipe step tidak dikenal: " + step.type };
     }
   };
@@ -474,6 +558,8 @@ var replayer = (globalThis.TESTERIA_REPLAYER = globalThis.TESTERIA_REPLAYER || {
   /**
    * Isi input/textarea setelah prompt password manual (nilai sekali pakai,
    * tidak pernah disimpan ke storage).
+   *
+   * Juga dipakai replayer.executeAssertion (step type "assert").
    */
   replayer.fillInput = async function (selectorObj, value) {
     var resolved = await resolveElement(selectorObj);

@@ -1,8 +1,8 @@
 # Testeria
 
-**Record & replay user actions di browser** — proof of concept (v0.2), bukan tool test automation lengkap.
+**Record & replay user actions di browser** — proof of concept (v0.3), bukan tool test automation lengkap.
 
-Tekan **F8** (atau **Ctrl+Shift+Y**) di halaman web untuk mulai merekam klik, input, dan navigasi. Tekan lagi untuk berhenti, beri nama, lalu replay dari popup toolbar dengan progress per step.
+Tekan **F8** (atau **Ctrl+Shift+Y**) di halaman web untuk mulai merekam klik, input, dan navigasi. Tekan lagi untuk berhenti, beri nama, lalu replay dari popup toolbar dengan progress per step. **Alt+Klik** elemen mana pun saat recording untuk menulis ASSERTION — saat replay, elemen diverifikasi (pass/fail per step), bukan sekadar diklik.
 
 Vanilla JS, tanpa build step, tanpa framework. Jalan di Chrome/Edge/Brave/Chromium dan Firefox.
 
@@ -22,6 +22,7 @@ Vanilla JS, tanpa build step, tanpa framework. Jalan di Chrome/Edge/Brave/Chromi
 
 ### Shortcut
 - **F8** — start/stop recording (listener halaman; fokus harus di halaman web).
+- **Alt+Klik** elemen — saat recording: tulis assertion (lihat bawah); saat tidak recording: klik biasa.
 - **Ctrl+Shift+Y** — command resmi toggle recording (bisa di-rebind di pengaturan shortcut browser;
   Chrome menolak F8 polos di manifest `commands`, makanya F8 lewat listener halaman).
 - **F9** — quick menu replay di tengah layar: daftar recording, satu klik langsung replay.
@@ -73,7 +74,8 @@ popup/                   list recording + search + kartu status replay + setting
 ### Format step
 ```json
 {
-  "type": "click | input | select | check | key | navigate",
+  "type": "click | input | select | check | key | navigate | assert",
+  "assertMode": "text | value | checked | visible",
   "selector": { "css": "...", "text": "...", "xpath": "...", "alt": [{ "css": "...", "text": "..." }] },
   "value": "...",
   "url": "...",
@@ -84,6 +86,18 @@ popup/                   list recording + search + kartu status replay + setting
 - `ts` — ms relatif sejak record dimulai; `delayMs` — jeda dari step sebelumnya, clamp 0–2000 ms.
 - Saat replay, step `navigate` melewati sleep `delayMs` — jeda tidak berlaku untuk navigasi (pindah halaman menggantikan jeda).
 - Step data murni (JSON) — tidak ada JS yang dieval.
+
+### Assertion (Alt+Klik)
+
+Saat recording, **Alt+Klik** elemen = tulis step `assert` — kliknya DITELAN (halaman TIDAK berubah: link tidak bernavigasi, checkbox tidak toggle). Mode dipilih otomatis dari jenis elemen:
+
+| Elemen | Mode | Arti saat replay |
+|---|---|---|
+| `input`/`textarea`/`select` | `value` | nilai harus sama persis; field password (masked): cukup harus TERISI |
+| checkbox / radio | `checked` | status centang sama seperti saat recording |
+| elemen lain | `text` | innerText harus mengandung teks yang terlihat saat recording |
+
+Assertion di-polling (sampai 5 dtk) — elemen delayed-render tetap lolos; yang gagal menghentikan replay DI step itu dengan pesan expected vs aktual. Di panel task, assertion ditandai badge hijau. Nilai password tidak pernah terekam (aturan mask sama dengan step input).
 
 ### Replay: lifecycle, panel task, password
 
@@ -122,7 +136,7 @@ Folder `test/` berisi harness Playwright (Chromium + extension dimuat unpacked) 
 
 ```bash
 cd test && npm install && npx playwright install chromium
-node run-all.js        # 5 suite: record, replay, panel+jump+instant, start-race, playtest
+node run-all.js        # 6 suite: record, replay, panel+jump+instant, start-race, playtest, assertion
 ```
 
 Cakupan suite:
@@ -131,6 +145,7 @@ Cakupan suite:
 3. **test-panel** — panel daftar task tampil, jump-to-step menjalankan ulang dari step terpilih, instant mode persist.
 4. **test-race** — regresi bug start: startUrl me-redirect diri; step jalan di halaman tujuan; navigate + delayed click lolos.
 5. **test-playtest** — 11 skenario careless-user di surface nyata: pause/resume (termasuk di tengah `delayMs`), skip saat running memotong jeda (step ter-skip tidak jalan), batal password → failed eksplisit → retry/skip, stop, Escape prompt, tab ditutup saat waiting → recovery popup, reload tengah replay, **guard reload mid-step → paused + notice → Lanjutkan jalan di dokumen baru**, × kecilkan panel → pill → restore.
+6. **test-assert** — record Alt+Klik (value/masked/checked/text), Alt+Click ditelan (halaman tak berubah), password ter-mask, replay positif → done, replay negatif → gagal TEPAT di step assertion dengan pesan expected/actual.
 
 ## Known limitations v1 (di luar scope, sengaja tidak dikerjakan)
 

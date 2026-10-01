@@ -382,6 +382,8 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     ".tst-step-item.current { background: rgba(124,77,255,.3); color: #fff; }",
     ".tst-step-item.done { opacity: .55; }",
     ".tst-step-item.failed { background: rgba(242,139,130,.18); color: #f6aea6; }",
+    ".tst-step-item.assert .tst-step-num { background: rgba(0,229,160,.35); color: #d6fff2; border-radius: 4px; }",
+    ".tst-step-item.assert.current .tst-step-num { background: #00e5a0; color: #06281e; }",
     ".tst-step-num { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; display: inline-flex;",
     "  align-items: center; justify-content: center; font: 600 9.5px/1 system-ui, sans-serif;",
     "  background: rgba(124,77,255,.35); color: #e6dcff; }",
@@ -609,7 +611,7 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
    * lalu di-UPDATE IN PLACE — full re-render tiap step membuat tombol lepas
    * dari DOM sehingga klik user sering kena "element detached" (ditemukan saat
    * playtest: Pause tak bisa diklik karena panel terus dibangun ulang).
-   * opts: { name, status, current, total, labels[], error, failedStep, notice,
+   * opts: { name, status, current, total, labels[], types[], error, failedStep, notice,
    *         onJump(n), onAction("pause"|"resume"|"skip"|"stop"|"retry") }
    */
   overlay.showReplayPanel = function (opts) {
@@ -659,7 +661,9 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
       if (opts.labels && opts.labels.length) {
         for (var i = 0; i < opts.labels.length; i++) {
           (function (idx) {
-            var b = el("button", { class: "tst-step-item" });
+            var b = el("button", {
+              class: "tst-step-item" + (opts.types && opts.types[idx] === "assert" ? " assert" : "")
+            });
             b.appendChild(el("span", { class: "tst-step-num" }, String(idx + 1)));
             b.appendChild(el("span", { class: "tst-step-label" }, opts.labels[idx] || "step " + (idx + 1)));
             b.addEventListener("click", function () {
@@ -707,6 +711,7 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     // Kelas step: current / failed / done — cukup swap className, DOM tetap.
     for (var k = 0; k < d.items.length; k++) {
       var cls = "tst-step-item";
+      if (opts.types && opts.types[k] === "assert") cls += " assert";
       if (opts.current === k) cls += " current";
       else if (opts.failedStep === k) cls += " failed";
       else if (opts.current != null && k < opts.current) cls += " done";

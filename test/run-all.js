@@ -5,7 +5,7 @@
 const { spawnSync } = require("child_process");
 const path = require("path");
 
-const suites = ["test-record.js", "test-replay.js", "test-panel.js", "test-race.js", "test-playtest.js"];
+const suites = ["test-record.js", "test-replay.js", "test-panel.js", "test-race.js", "test-playtest.js", "test-assert.js"];
 let failed = 0;
 
 for (const s of suites) {

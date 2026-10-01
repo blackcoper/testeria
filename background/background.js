@@ -305,7 +305,8 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
       startedIndex: null,
       notice: null,
       failedStep: null,
-      labels: rec.steps.map(bg.labelForStep) // untuk daftar task di panel/popup
+      labels: rec.steps.map(bg.labelForStep), // untuk daftar task di panel/popup
+      types: rec.steps.map(function (s) { return (s && s.type) || "?"; }),
     });
 
     var tab;
@@ -372,6 +373,15 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
         return (step.value === "checked" ? "centang " : "lepas ") + (t || "checkbox");
       case "key":
         return "tombol " + String(step.value || "");
+      case "assert": {
+        var mode = step.assertMode || "text";
+        // Jangan pernah bocorkan value password di daftar task.
+        var expect = step.masked ? "***" : '"' + String(step.value == null ? "" : step.value).slice(0, 18) + '"';
+        if (mode === "value") return "verifikasi nilai " + (t || "field") + " = " + expect;
+        if (mode === "checked") return (step.value === "checked" ? "verifikasi tercentang " : "verifikasi tidak tercentang ") + (t || "checkbox");
+        if (mode === "visible") return "verifikasi tampil " + (t || text || "elemen");
+        return "verifikasi teks " + (t || text || "elemen") + (step.value ? " mengandung " + expect : "");
+      }
       case "click":
         return (step.dblclick ? "klik 2x " : step.button === "right" ? "klik kanan " : "klik ") +
           (text.trim() ? text.trim().slice(0, 18) : t || "elemen");
