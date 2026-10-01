@@ -29,10 +29,6 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     ambient: null,
     ambientOn: false,
     cursorMode: "arrow", // "arrow" | "beam"
-    trail: null,
-    trailPts: null,
-    trailLive: false,
-    trailFade: null,
     cursorX: null,
     cursorY: null,
     quick: null,
@@ -107,8 +103,6 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     "  border-radius: 50%; border: 2px solid #e91e8c; opacity: 0; transform: scale(.4); }",
     ".tst-cursor.click .ring { animation: tst-ring 480ms ease-out; }",
     "@keyframes tst-ring { 0% { opacity: .95; transform: scale(.5); } 100% { opacity: 0; transform: scale(3.2); } }",
-    // ---- jejak mouse (polyline kecil yang mengikuti animasi kursor) ----
-    ".tst-trail { position: fixed; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }",
     // ---- ambient bingkai tepian: dua cincin conic-gradient berputar berlawanan ----
     ".tst-ambient { position: fixed; inset: 0; pointer-events: none; z-index: 2147483645;",
     "  opacity: 0; transition: opacity 500ms ease; }",
@@ -159,19 +153,6 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
       '<div class="frame"></div><div class="frame b2"></div><div class="frame b3"></div>';
     host.appendChild(amb);
     ui.ambient = amb;
-
-    // Polyline jejak yang mengikuti animasi kursor.
-    var trail = document.createElement("div");
-    trail.className = "tst-trail";
-    trail.innerHTML =
-      '<svg width="100%" height="100%">' +
-      '<defs><linearGradient id="tstg" x1="0" y1="0" x2="1" y2="1">' +
-      '<stop offset="0" stop-color="#7c4dff"/><stop offset="1" stop-color="#e91e8c"/>' +
-      '</linearGradient></defs>' +
-      '<polyline points="" fill="none" stroke="url(#tstg)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0"/>' +
-      '</svg>';
-    host.appendChild(trail);
-    ui.trail = trail;
 
     var cur = document.createElement("div");
     cur.className = "tst-cursor";
@@ -224,86 +205,36 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     return false;
   }
 
-  var rafState = { running: false };
-
-  function startRaf() {
-    if (rafState.running) return;
-    rafState.running = true;
-    requestAnimationFrame(rafTick);
-  }
-
-  function rafTick() {
-    if (!rafState.running) return;
-    var now = performance.now();
-    var stillAnimating = false;
-
-    // (1) posisi kursor terkini
-    if (ui.cursor && ui.cursorX != null) {
-      ui.cursor.style.transform =
-        "translate(" + Math.round(ui.cursorX) + "px," + Math.round(ui.cursorY) + "px)";
-    }
-
-    // (2) jejak: mengikuti kursor saat terbang, lalu disusutkan titik demi
-    // titik dan memudar — loop WAJIB berakhir (tidak ada rAF abadi).
-    var poly = ui.trail ? ui.trail.querySelector("polyline") : null;
-    if (poly) {
-      if (ui.trailLive && ui.trailPts && ui.trailPts.length) {
-        ui.trailPts.push([ui.cursorX || 0, ui.cursorY || 0]);
-        if (ui.trailPts.length > 18) ui.trailPts.shift();
-        poly.setAttribute("points", ui.trailPts.map(function (p) {
-          return p[0].toFixed(1) + "," + p[1].toFixed(1);
-        }).join(" "));
-        poly.setAttribute("opacity", "0.55");
-        stillAnimating = true;
-      } else if (ui.trailPts && ui.trailPts.length) {
-        ui.trailPts.shift(); // susutkan jejak setelah kursor berhenti
-        poly.setAttribute("points", ui.trailPts.map(function (p) {
-          return p[0].toFixed(1) + "," + p[1].toFixed(1);
-        }).join(" "));
-        poly.setAttribute("opacity", "0.45");
-        if (!ui.trailPts.length) ui.trailFade = now;
-        stillAnimating = true;
-      } else if (ui.trailFade != null && now - ui.trailFade < 600) {
-        poly.setAttribute("opacity", String(0.45 * (1 - (now - ui.trailFade) / 600)));
-        stillAnimating = true;
+  /** Gerakan halus dari (x0,y0) ke (x1,y1): ease-in-out penuh, TANPA jejak yang
+   * menyebabkan kedip. Gerakan terasa seperti manusia — bukan penyisipan linear
+   * kaku antar titik jejak. */
+  function glide(from, to, duration, onFrame, onDone) {
+    var start = null;
+    function frame(ts) {
+      if (start == null) start = ts;
+      var t = Math.min(1, (ts - start) / duration);
+      var e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      onFrame(from[0] + (to[0] - from[0]) * e, from[1] + (to[1] - from[1]) * e);
+      if (t < 1) {
+        requestAnimationFrame(frame);
       } else {
-        if (poly.getAttribute("points")) {
-          poly.setAttribute("points", "");
-          poly.setAttribute("opacity", "0");
-        }
-        ui.trailFade = null;
+        onDone();
       }
     }
-
-    if (stillAnimating) {
-      requestAnimationFrame(rafTick);
-    } else {
-      rafState.running = false;
-    }
-  }
-
-  function drawTrail(pointsPx) {
-    if (!ui.trail) return;
-    ui.trailPts = pointsPx.map(function (p) {
-      return [p[0], p[1]];
-    });
-    ui.trailLive = true;
-    ui.trailFade = null;
-    startRaf();
+    requestAnimationFrame(frame);
   }
 
   /**
-   * Gerakkan kursor virtual menyusuri jejak mouse yang terekam (animasi
-   * requestAnimationFrame, kecepatan konstan ~1.4 px/ms) lalu sampai tujuan.
-   * Bentuk menyesuaikan: I-beam di atas field teks, kelopak di tempat lain.
-   * Resolve saat kursor tiba. Tanpa jejak terekam: gerak langsung halus.
+   * Gerakkan kursor virtual ke (x,y) dengan glide halus ease-in-out —
+   * gerakan langsung from→to, TANPA rekonstruksi jejak mouse terekam
+   * (dulu menyebabkan lompatan/blink; ditemukan via E2E).
+   * Instant mode (settings.replayInstant): kursor pindah tanpa animasi.
+   * Resolve saat kursor tiba.
    */
-  overlay.vcMoveTo = function (x, y, label, path) {
+  overlay.vcMoveTo = function (x, y, label) {
     if (!ui.cursorHost || !ui.cursorHost.isConnected || !ui.cursor) {
       return Promise.resolve(false);
     }
-    var vw = window.innerWidth || 1;
-    var vh = window.innerHeight || 1;
     var beam = isTextInputAt(x, y);
     setCursorArt(beam ? "beam" : "arrow");
     if (ui.cursorLabel) {
@@ -312,88 +243,49 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     if (label) ui.cursor.classList.add("show-lbl");
     else ui.cursor.classList.remove("show-lbl");
 
-    // Jalur: jejak terekam (ternormalisasi → px) + titik tujuan di akhir.
-    var pts = [];
-    if (Array.isArray(path) && path.length > 1) {
-      for (var i = 0; i < path.length; i++) {
-        var p = path[i];
-        var px = (typeof p.x === "number" && p.x <= 1.5 ? p.x * vw : p.x);
-        var py = (typeof p.y === "number" && p.y <= 1.5 ? p.y * vh : p.y);
-        pts.push([px, py]);
-      }
-    }
-    pts.push([x, y]);
+    var fromX = ui.cursorX == null ? x : ui.cursorX;
+    var fromY = ui.cursorY == null ? y : ui.cursorY;
+    var dist = Math.abs(x - fromX) + Math.abs(y - fromY);
 
-    // Hapus titik awal yang terlalu dekat (hindari segmen nol)
-    pts = pts.filter(function (p, idx) {
-      if (idx === 0) return true;
-      var prev = pts[idx - 1];
-      return Math.abs(p[0] - prev[0]) + Math.abs(p[1] - prev[1]) > 2;
-    });
-
-    // Posisi awal: dari posisi kursor saat ini (lanjutan mulus antar step)
-    var startX = ui.cursorX == null ? pts[0][0] : ui.cursorX;
-    var startY = ui.cursorY == null ? pts[0][1] : ui.cursorY;
-    if (Math.abs(startX - pts[0][0]) + Math.abs(startY - pts[0][1]) > 40) {
-      // Posisi kursor jauh dari awal jejak: mulai dari kursor, sambung ke jejak
-      pts.unshift([startX, startY]);
+    if (overlay.instantMode()) {
+      ui.cursorX = x;
+      ui.cursorY = y;
+      ui.cursor.style.transform = "translate(" + Math.round(x) + "px," + Math.round(y) + "px)";
+      return Promise.resolve(true);
     }
 
-    var SPEED = 1.4; // px per ms
-    var total = 0;
-    var segs = [];
-    for (var s = 1; s < pts.length; s++) {
-      var dx = pts[s][0] - pts[s - 1][0];
-      var dy = pts[s][1] - pts[s - 1][1];
-      var len = Math.sqrt(dx * dx + dy * dy);
-      segs.push(len);
-      total += len;
-    }
-    var duration = Math.max(140, Math.min(1400, total / SPEED));
-
+    var duration = Math.max(180, Math.min(900, dist / 1.6));
     return new Promise(function (resolve) {
-      if (total < 1) {
+      if (dist < 1) {
         ui.cursorX = x;
         ui.cursorY = y;
         ui.cursor.style.transform = "translate(" + Math.round(x) + "px," + Math.round(y) + "px)";
         resolve(true);
         return;
       }
-      var startTime = null;
-      function frame(ts) {
-        if (startTime == null) startTime = ts;
-        var t = Math.min(1, (ts - startTime) / duration);
-        // Easing ease-in-out ringan biar start/stop terasa hidup
-        var e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        var targetDist = total * e;
-        var acc = 0;
-        var px = pts[pts.length - 1][0], py = pts[pts.length - 1][1];
-        for (var k = 0; k < segs.length; k++) {
-          if (acc + segs[k] >= targetDist) {
-            var f = segs[k] > 0 ? (targetDist - acc) / segs[k] : 0;
-            px = pts[k][0] + (pts[k + 1][0] - pts[k][0]) * f;
-            py = pts[k][1] + (pts[k + 1][1] - pts[k][1]) * f;
-            break;
-          }
-          acc += segs[k];
-        }
-        ui.cursorX = px;
-        ui.cursorY = py;
-        drawTrail(pts.slice(0, k + 2).map(function (p) { return p.slice(); }));
-        if (t < 1) {
-          requestAnimationFrame(frame);
-        } else {
+      glide(
+        [fromX, fromY],
+        [x, y],
+        duration,
+        function (px, py) {
+          ui.cursorX = px;
+          ui.cursorY = py;
+          ui.cursor.style.transform = "translate(" + Math.round(px) + "px," + Math.round(py) + "px)";
+        },
+        function () {
           ui.cursorX = x;
           ui.cursorY = y;
           ui.cursor.style.transform = "translate(" + Math.round(x) + "px," + Math.round(y) + "px)";
-          ui.trailLive = false; // jejak mulai disusutkan & memudar
-          startRaf();
           resolve(true);
         }
-      }
-      requestAnimationFrame(frame);
+      );
     });
   };
+
+  /** Instant mode (settings.replayInstant) — cache di modul; di-set main.js. */
+  var instant = false;
+  overlay.setInstantMode = function (v) { instant = !!v; };
+  overlay.instantMode = function () { return instant; };
 
   /** Efek ripple di posisi kursor (panggil saat aksi dieksekusi). */
   overlay.vcClick = function () {
@@ -424,16 +316,12 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
   };
 
   overlay.cursorStop = function () {
-    rafState.running = false; // hentikan loop animasi
     if (ui.cursorHost) {
       ui.cursorHost.remove();
       ui.cursorHost = null;
       ui.cursor = null;
       ui.cursorLabel = null;
       ui.ambient = null;
-      ui.trail = null;
-      ui.trailPts = null;
-      ui.trailFade = null;
       ui.cursorX = null;
       ui.cursorY = null;
       ui.cursorMode = "arrow";
@@ -471,6 +359,41 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     ".btn-secondary { background: #fff; border-color: #dadce0 !important; color: #202124; }",
     ".btn-primary { background: #1a73e8; color: #fff; }",
     ".btn-primary:disabled { background: #bdc1c6; cursor: not-allowed; }",
+    // ---- Panel replay (progress + daftar task) ----
+    ".tst-panel { position: fixed; bottom: 14px; right: 14px; pointer-events: auto;",
+    "  width: 300px; max-height: min(70vh, 520px); display: flex; flex-direction: column;",
+    "  background: rgba(18,18,26,.96); color: #efeafe; border-radius: 14px;",
+    "  border: 1px solid rgba(124,77,255,.45); box-shadow: 0 18px 60px rgba(0,0,0,.5); overflow: hidden; }",
+    ".tst-panel.failed { border-color: rgba(242,139,130,.55); }",
+    ".tst-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px 6px; }",
+    ".tst-panel-title { font: 600 12px/1.4 system-ui, sans-serif; letter-spacing: .02em;",
+    "  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+    ".tst-panel-x { background: transparent; border: none; color: #b9a8e8; font-size: 16px; cursor: pointer; padding: 0 4px; }",
+    ".tst-panel-status { padding: 0 12px; font: 600 12.5px/1.5 system-ui, sans-serif; color: #c9b8ff; }",
+    ".tst-panel-status.err { color: #f28b82; }",
+    ".tst-panel-hint { padding: 4px 12px 0; font: 400 11px/1.5 system-ui, sans-serif; color: #a99bd1; }",
+    ".tst-panel-err { margin: 6px 12px 0; padding: 7px 9px; border-radius: 8px; background: rgba(242,139,130,.12);",
+    "  font: 400 11px/1.5 system-ui, sans-serif; color: #f6aea6; max-height: 88px; overflow-y: auto; }",
+    ".tst-panel-list { margin-top: 8px; overflow-y: auto; padding: 2px 8px 8px; }",
+    ".tst-step-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;",
+    "  background: transparent; border: none; border-radius: 8px; padding: 5px 8px; margin: 1px 0;",
+    "  color: #cfc4f2; cursor: pointer; font: 400 11.5px/1.4 system-ui, sans-serif; }",
+    ".tst-step-item:hover { background: rgba(124,77,255,.18); }",
+    ".tst-step-item.current { background: rgba(124,77,255,.3); color: #fff; }",
+    ".tst-step-item.done { opacity: .55; }",
+    ".tst-step-item.failed { background: rgba(242,139,130,.18); color: #f6aea6; }",
+    ".tst-step-num { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; display: inline-flex;",
+    "  align-items: center; justify-content: center; font: 600 9.5px/1 system-ui, sans-serif;",
+    "  background: rgba(124,77,255,.35); color: #e6dcff; }",
+    ".tst-step-item.current .tst-step-num { background: #7c4dff; color: #fff; }",
+    ".tst-step-item.failed .tst-step-num { background: #f28b82; color: #201a1a; }",
+    ".tst-step-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+    ".tst-panel-actions { display: flex; gap: 6px; padding: 8px 12px 12px; border-top: 1px solid rgba(124,77,255,.25); }",
+    ".tst-panel-actions button { flex: 1; border: 1px solid #5f6368; background: transparent; color: #efeafe;",
+    "  border-radius: 7px; padding: 6px 4px; font: 500 11.5px/1.2 system-ui, sans-serif; cursor: pointer; }",
+    ".tst-panel-actions button.primary { background: #7c4dff; border-color: #7c4dff; color: #fff; }",
+    ".tst-panel-actions button:hover { background: rgba(124,77,255,.25); }",
+    ".tst-panel-actions button.primary:hover { background: #8d5cff; }",
     // ---- Quick menu (F9): launcher replay di tengah layar ----
     ".tst-quick-backdrop { position: fixed; inset: 0; background: rgba(10,10,16,.45);",
     "  pointer-events: auto; display: flex; align-items: center; justify-content: center; }",
@@ -496,7 +419,17 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     ".tst-quick-meta { font: 400 10.5px/1.4 system-ui, sans-serif; color: #a99bd1; flex-shrink: 0; }",
     ".tst-quick-empty { padding: 18px 14px; font: 400 12px/1.6 system-ui, sans-serif; color: #a99bd1; }",
     ".tst-quick-foot { padding: 8px 14px; border-top: 1px solid rgba(124,77,255,.25);",
-    "  font: 400 10.5px/1.4 system-ui, sans-serif; color: #8d7fb8; }"
+    "  font: 400 10.5px/1.4 system-ui, sans-serif; color: #8d7fb8; }",
+    // ---- Panel dikecilkan: pill status klik-untuk-buka ----
+    ".tst-minipill { position: fixed; bottom: 14px; right: 14px; pointer-events: auto;",
+    "  background: rgba(18,18,26,.96); color: #efeafe; border: 1px solid rgba(124,77,255,.45);",
+    "  border-radius: 999px; padding: 6px 14px; font: 500 11.5px/1.4 system-ui, sans-serif;",
+    "  cursor: pointer; box-shadow: 0 10px 30px rgba(0,0,0,.45); }",
+    ".tst-minipill:hover { background: rgba(124,77,255,.3); }",
+    // ---- Notice kuning (mis. guard reload di tengah step) ----
+    ".tst-panel-notice { margin: 6px 12px 0; padding: 7px 9px; border-radius: 8px;",
+    "  background: rgba(251,188,5,.12); font: 400 11px/1.5 system-ui, sans-serif;",
+    "  color: #fdd663; max-height: 110px; overflow-y: auto; }"
   ].join("\n");
 
   function el(tag, attrs, text) {
@@ -596,98 +529,230 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
   };
 
   // ---------------------------------------------------------------------------
-  // Replay: progress pill, failure panel, password prompt
+  // Replay: panel progress + daftar task (klik untuk mulai dari step itu)
   // ---------------------------------------------------------------------------
+  var panelDom = null; // { el, statusEl, noticeEl, errEl, hintEl, listEl, actionsEl, items: [], actionsSig }
+  var panelOpts = null; // opts terakhir (labels dipakai ulang antar render)
+  var panelMinimized = false; // × = kecilkan ke pill (replay JALAN TERUS), bukan stop
+  var pillDom = null; // { el } — pill status saat panel dikecilkan
+  // Handler panel SELALU dibaca dari variabel modul ini — bukan dari closure
+  // saat tombol dibuat. Panel bisa dibangun oleh showReplayProgress (fallback
+  // tanpa handler) SEBELUM render ber-state datang; kalau listener menangkap
+  // closure lama, tombol klikannya mati (ditemukan saat playtest: Pause tidak
+  // berfungsi karena closures kosong dari build pertama).
+  var panelHandlers = { onJump: null, onAction: null };
+
+  function panelStatusText(o) {
+    return {
+      running: "Step " + ((o.current || 0) + 1) + "/" + o.total,
+      "waiting-password": "Menunggu password — step " + ((o.current || 0) + 1) + "/" + o.total,
+      paused: "DIJEDA — step " + ((o.current || 0) + 1) + "/" + o.total,
+      failed: "GAGAL di step " + ((o.failedStep != null ? o.failedStep : o.current || 0) + 1) + "/" + o.total,
+      loading: "Menyiapkan halaman…",
+      done: "Selesai ✓ " + o.total + " step"
+    }[o.status] || "";
+  }
+
+  // [label, action, primary] — action selalu slot 1 (dulu Stop ditulis
+  // ["Stop", <primary>] → handler menerima `true`/`false` sebagai aksi dan
+  // tidak mengirim apa pun; ditemukan saat playtest: tombol Stop mati).
+  function panelButtonsFor(status) {
+    if (status === "running" || status === "waiting-password") {
+      return [["Pause", "pause"], ["Skip", "skip"], ["Stop", "stop", true]];
+    }
+    if (status === "paused") {
+      return [["Lanjutkan", "resume", true], ["Skip", "skip"], ["Stop", "stop"]];
+    }
+    if (status === "failed") {
+      return [["Ulangi step", "retry", true], ["Skip", "skip"], ["Stop", "stop"]];
+    }
+    if (status === "loading") return [["Stop", "stop", true]];
+    return []; // done
+  }
+
+  /** Teks pill status saat panel dikecilkan (×). */
+  function pillTextFor(o) {
+    var n = (o.current || 0) + 1;
+    if (o.status === "failed") {
+      return "⚡ Gagal di step " + ((o.failedStep != null ? o.failedStep : o.current || 0) + 1) + "/" + o.total;
+    }
+    if (o.status === "done") return "⚡ Selesai ✓ " + o.total + " step";
+    if (o.status === "loading") return "⚡ Menyiapkan halaman…";
+    if (o.status === "paused") return "⚡ Dijeda — step " + n + "/" + o.total;
+    if (o.status === "waiting-password") return "⚡ Password — step " + n + "/" + o.total;
+    return "⚡ Step " + n + "/" + o.total;
+  }
+
+  /** Kecilkan panel: ganti dengan pill status kecil di pojok. Replay jalan terus. */
+  function renderReplayPill() {
+    var o = panelOpts;
+    if (!o) return;
+    if (panelDom && panelDom.el && panelDom.el.isConnected) panelDom.el.remove();
+    panelDom = null; // restore rebuild panel penuh dari panelOpts
+    var root = ui.root && ui.host && ui.host.isConnected ? ui.root : ensureRoot();
+    if (!pillDom || !pillDom.el || !pillDom.el.isConnected) {
+      var b = el("button", { class: "tst-minipill", title: "Tampilkan panel replay" });
+      b.addEventListener("click", function () {
+        panelMinimized = false;
+        if (pillDom) { pillDom.el.remove(); pillDom = null; }
+        if (panelOpts) overlay.updateReplayPanel(panelOpts);
+      });
+      root.appendChild(b);
+      pillDom = { el: b };
+    }
+    pillDom.el.textContent = pillTextFor(o);
+    ui.pill = pillDom.el;
+  }
+
+  /**
+   * Panel replay: dibangun SEKALI per replay (atau saat jumlah step berubah),
+   * lalu di-UPDATE IN PLACE — full re-render tiap step membuat tombol lepas
+   * dari DOM sehingga klik user sering kena "element detached" (ditemukan saat
+   * playtest: Pause tak bisa diklik karena panel terus dibangun ulang).
+   * opts: { name, status, current, total, labels[], error, failedStep, notice,
+   *         onJump(n), onAction("pause"|"resume"|"skip"|"stop"|"retry") }
+   */
+  overlay.showReplayPanel = function (opts) {
+    var root = ui.root && ui.host && ui.host.isConnected ? ui.root : ensureRoot();
+
+    panelHandlers.onJump = typeof opts.onJump === "function" ? opts.onJump : panelHandlers.onJump;
+    panelHandlers.onAction =
+      typeof opts.onAction === "function" ? opts.onAction : panelHandlers.onAction;
+    panelOpts = opts;
+
+    // Dikecilkan user (×): jangan bangun ulang panel — cukup perbarui pill.
+    if (panelMinimized) {
+      renderReplayPill();
+      return;
+    }
+
+    // (Re)build: panel belum ada, ATAU daftar step berubah jumlahnya
+    // (replay baru / reload / build pertama tanpa labels).
+    if (
+      !panelDom ||
+      !panelDom.el.isConnected ||
+      (opts.labels && opts.labels.length !== panelDom.items.length)
+    ) {
+      if (panelDom && panelDom.el.isConnected) panelDom.el.remove();
+      var panel = el("div", { class: "tst-panel" });
+      var head = el("div", { class: "tst-panel-head" });
+      head.appendChild(el("span", { class: "tst-panel-title" }, "⚡ Testeria replay" + (opts.name ? " — " + opts.name : "")));
+      var close = el("button", { class: "tst-panel-x", title: "Kecilkan panel (replay tetap jalan)" }, "×");
+      close.addEventListener("click", function () {
+        panelMinimized = true;
+        renderReplayPill();
+      });
+      head.appendChild(close);
+      panel.appendChild(head);
+
+      var statusEl = el("div", { class: "tst-panel-status" });
+      panel.appendChild(statusEl);
+      var hintEl = el("div", { class: "tst-panel-hint", style: "display:none" });
+      panel.appendChild(hintEl);
+      var noticeEl = el("div", { class: "tst-panel-notice", style: "display:none" });
+      panel.appendChild(noticeEl);
+      var errEl = el("div", { class: "tst-panel-err", style: "display:none" });
+      panel.appendChild(errEl);
+
+      var listEl = el("div", { class: "tst-panel-list" });
+      var items = [];
+      if (opts.labels && opts.labels.length) {
+        for (var i = 0; i < opts.labels.length; i++) {
+          (function (idx) {
+            var b = el("button", { class: "tst-step-item" });
+            b.appendChild(el("span", { class: "tst-step-num" }, String(idx + 1)));
+            b.appendChild(el("span", { class: "tst-step-label" }, opts.labels[idx] || "step " + (idx + 1)));
+            b.addEventListener("click", function () {
+              if (typeof panelHandlers.onJump === "function") panelHandlers.onJump(idx + 1); // 1-based
+            });
+            listEl.appendChild(b);
+            items.push(b);
+          })(i);
+        }
+      }
+      panel.appendChild(listEl);
+
+      var actionsEl = el("div", { class: "tst-panel-actions" });
+      panel.appendChild(actionsEl);
+
+      ui.pill = panel;
+      root.appendChild(panel);
+      panelDom = { el: panel, statusEl: statusEl, noticeEl: noticeEl, hintEl: hintEl, errEl: errEl, listEl: listEl, actionsEl: actionsEl, items: items };
+    }
+
+    var d = panelDom;
+    var failed = opts.status === "failed";
+    d.el.className = "tst-panel" + (failed ? " failed" : "");
+    d.statusEl.textContent = panelStatusText(opts);
+    d.statusEl.className = "tst-panel-status" + (failed ? " err" : "");
+    if (opts.status === "paused") {
+      d.hintEl.textContent = "Halaman bebas Anda utak-atik, lalu lanjutkan. Klik step mana pun di daftar untuk mulai dari sana.";
+      d.hintEl.style.display = "";
+    } else {
+      d.hintEl.style.display = "none";
+    }
+    if (opts.error) {
+      d.errEl.textContent = opts.error;
+      d.errEl.style.display = "";
+    } else {
+      d.errEl.style.display = "none";
+    }
+    if (opts.notice) {
+      d.noticeEl.textContent = opts.notice;
+      d.noticeEl.style.display = "";
+    } else {
+      d.noticeEl.style.display = "none";
+    }
+
+    // Kelas step: current / failed / done — cukup swap className, DOM tetap.
+    for (var k = 0; k < d.items.length; k++) {
+      var cls = "tst-step-item";
+      if (opts.current === k) cls += " current";
+      else if (opts.failedStep === k) cls += " failed";
+      else if (opts.current != null && k < opts.current) cls += " done";
+      d.items[k].className = cls;
+    }
+    var mark = d.listEl.querySelector(".current, .failed");
+    if (mark && mark.scrollIntoView) {
+      try { mark.scrollIntoView({ block: "nearest" }); } catch (e) {}
+    }
+
+    // Tombol aksi: rebuild HANYA saat set-nya berubah (status berganti).
+    var wanted = panelButtonsFor(opts.status);
+    var sig = JSON.stringify(wanted);
+    if (d.actionsSig !== sig) {
+      d.actionsEl.textContent = "";
+      for (var a = 0; a < wanted.length; a++) {
+        (function (w) {
+          var b = el("button", { class: w[2] ? "primary" : null }, w[0]);
+          b.addEventListener("click", function () {
+            if (typeof panelHandlers.onAction === "function") panelHandlers.onAction(w[1]);
+          });
+          d.actionsEl.appendChild(b);
+        })(wanted[a]);
+      }
+      d.actionsSig = sig;
+    }
+    if (opts.status === "done") {
+      setTimeout(function () {
+        if (ui.pill === d.el) overlay.hideReplay();
+      }, 4000);
+    }
+  };
+
+  overlay.updateReplayPanel = function (opts) {
+    opts.labels = opts.labels || (panelOpts && panelOpts.labels);
+    overlay.showReplayPanel(opts);
+  };
+
   overlay.showReplayProgress = function (stepNumber, total) {
-    overlay.hideReplay();
-    var root = ui.root && ui.host && ui.host.isConnected ? ui.root : ensureRoot();
-    var pill = el("div", { class: "pill" }, "Testeria replay — step " + stepNumber + "/" + total);
-    var row = el("div", { class: "row" });
-    var pause = el("button", null, "Pause");
-    pause.addEventListener("click", function () {
-      api.runtime.sendMessage({ type: "TESTERIA_REPLAY_PAUSE" }).catch(function () { });
+    overlay.updateReplayPanel({
+      status: "running",
+      current: stepNumber - 1,
+      total: total || 0,
+      error: null,
+      failedStep: null
     });
-    var stop = el("button", { class: "primary" }, "Stop");
-    stop.addEventListener("click", function () {
-      api.runtime.sendMessage({ type: "TESTERIA_STOP_REPLAY" }).catch(function () { });
-      overlay.hideReplay();
-    });
-    row.appendChild(pause);
-    row.appendChild(stop);
-    pill.appendChild(row);
-    ui.pill = pill;
-    root.appendChild(pill);
-  };
-
-  /** Pill saat replay dijeda: halaman bebas diedit, lalu lanjut/skip/stop. */
-  overlay.showReplayPaused = function (stepNumber, total) {
-    overlay.hideReplay();
-    var root = ui.root && ui.host && ui.host.isConnected ? ui.root : ensureRoot();
-    var pill = el("div", { class: "pill" });
-    pill.appendChild(el("div", null, "Testeria replay DIJEDA — step " + stepNumber + "/" + total));
-    pill.appendChild(
-      el(
-        "div",
-        { style: "color:#c58af9" },
-        "Halaman bebas Anda utak-atik (isi input, tutup popup), lalu lanjutkan."
-      )
-    );
-    var row = el("div", { class: "row" });
-    var resume = el("button", { class: "primary" }, "Lanjutkan");
-    resume.addEventListener("click", function () {
-      api.runtime.sendMessage({ type: "TESTERIA_REPLAY_RESUME" }).catch(function () { });
-      overlay.hideReplay();
-    });
-    var skip = el("button", null, "Skip step");
-    skip.addEventListener("click", function () {
-      api.runtime.sendMessage({ type: "TESTERIA_REPLAY_SKIP" }).catch(function () { });
-      overlay.hideReplay();
-    });
-    var stop = el("button", null, "Stop");
-    stop.addEventListener("click", function () {
-      api.runtime.sendMessage({ type: "TESTERIA_STOP_REPLAY" }).catch(function () { });
-      overlay.hideReplay();
-    });
-    row.appendChild(resume);
-    row.appendChild(skip);
-    row.appendChild(stop);
-    pill.appendChild(row);
-    ui.pill = pill;
-    root.appendChild(pill);
-  };
-
-  overlay.showReplayFailure = function (message) {
-    overlay.hideReplay();
-    var root = ui.root && ui.host && ui.host.isConnected ? ui.root : ensureRoot();
-    var pill = el("div", { class: "pill" });
-    pill.appendChild(el("div", null, "Testeria replay GAGAL"));
-    pill.appendChild(el("div", { style: "color:#f28b82" }, message));
-    var row = el("div", { class: "row" });
-    var retry = el("button", null, "Retry step");
-    var stop = el("button", { class: "primary" }, "Stop");
-    retry.addEventListener("click", function () {
-      api.runtime.sendMessage({ type: "TESTERIA_REPLAY_RETRY" }).catch(function () { });
-    });
-    stop.addEventListener("click", function () {
-      api.runtime.sendMessage({ type: "TESTERIA_STOP_REPLAY" }).catch(function () { });
-      overlay.hideReplay();
-    });
-    row.appendChild(retry);
-    row.appendChild(stop);
-    pill.appendChild(row);
-    ui.pill = pill;
-    root.appendChild(pill);
-  };
-
-  overlay.showReplayDone = function () {
-    overlay.hideReplay();
-    var root = ui.root && ui.host && ui.host.isConnected ? ui.root : ensureRoot();
-    var pill = el("div", { class: "pill" }, "Testeria replay selesai ✓");
-    ui.pill = pill;
-    root.appendChild(pill);
-    setTimeout(function () {
-      if (ui.pill === pill) overlay.hideReplay();
-    }, 4000);
   };
 
   overlay.hideReplay = function () {
@@ -695,6 +760,12 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
       ui.pill.remove();
       ui.pill = null;
     }
+    panelDom = null;
+    panelOpts = null;
+    panelHandlers.onJump = null;
+    panelHandlers.onAction = null;
+    panelMinimized = false;
+    pillDom = null;
   };
 
   // ---------------------------------------------------------------------------
@@ -811,6 +882,10 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
   overlay.showPasswordPrompt = function (stepNumber) {
     return new Promise(function (resolve) {
       overlay.closeModal();
+      // Backdrop modal menutupi panel replay — panel yang terlihat tapi tak
+      // bisa diklik = dead UI. Sembunyikan; perubahan status berikutnya
+      // (failed setelah Batal / running setelah Lanjut) me-render ulang panel.
+      overlay.hideReplay();
       var root = ui.root && ui.host && ui.host.isConnected ? ui.root : ensureRoot();
       var backdrop = el("div", { class: "backdrop" });
       var card = el("div", { class: "card" });
@@ -831,6 +906,21 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
         e.stopPropagation();
         if (e.key === "Enter") go.click();
       });
+      // Escape = batalkan (README mengklaim ini sejak awal; kini benar-benar ada).
+      // CAPTURE phase: handler keydown input memanggil stopPropagation, jadi
+      // listener bubble di backdrop tidak pernah melihat Escape (ditemukan saat
+      // playtest — Escape diam saja). Capture di backdrop menangkap sebelum itu.
+      backdrop.addEventListener(
+        "keydown",
+        function (e) {
+          if (e.key !== "Escape") return;
+          e.preventDefault();
+          e.stopPropagation();
+          overlay.closeModal();
+          resolve(null);
+        },
+        true
+      );
       cancel.addEventListener("click", function () {
         overlay.closeModal();
         resolve(null);

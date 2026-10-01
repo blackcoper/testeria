@@ -188,13 +188,14 @@ var replayer = (globalThis.TESTERIA_REPLAYER = globalThis.TESTERIA_REPLAYER || {
     return globalThis.TESTERIA_OVERLAY || null;
   }
 
-  /** Gerakkan kursor virtual ke elemen menyusuri jejak terekam (bila ada). */
-  async function vcMoveToEl(el, label, path) {
+  /** Gerakkan kursor virtual ke elemen (bila aktif). Jejak mouse terekam
+   * (`path`) sudah tidak dipakai — glide langsung from→to. */
+  async function vcMoveToEl(el, label) {
     var ov = vc();
     if (ov && typeof ov.vcMoveTo === "function") {
       var c = centerOf(el);
       try {
-        await ov.vcMoveTo(c.x, c.y, label || "", path || null);
+        await ov.vcMoveTo(c.x, c.y, label || "");
       } catch (e) {}
     }
   }
@@ -354,7 +355,29 @@ var replayer = (globalThis.TESTERIA_REPLAYER = globalThis.TESTERIA_REPLAYER || {
     }
 
     // ------------------- click / input / select / check ------------------
-    var resolved = await resolveElement(step.selector);
+    // Elemen harus ada DAN visible. Yang baru ada di DOM tapi masih hidden
+    // (delayed reveal / animasi masuk) TIDAK langsung gagal — polling diteruskan
+    // sampai visible atau timeout (ditemukan via E2E: "ditemukan tapi tidak
+    // visible" saat halaman masih menampilkan skeleton).
+    var resolved = null;
+    var visStarted = Date.now();
+    while (true) {
+      resolved = await resolveElement(step.selector);
+      if (!resolved) break;
+      if (isVisible(resolved.el)) break;
+      if (Date.now() - visStarted >= POLL_TIMEOUT_MS) {
+        return {
+          ok: false,
+          error:
+            "element ditemukan tapi tetap tidak visible setelah " +
+            POLL_TIMEOUT_MS / 1000 +
+            " detik (mungkin di dalam menu tertutup / tab tidak aktif)"
+        };
+      }
+      await new Promise(function (r) {
+        setTimeout(r, POLL_INTERVAL_MS);
+      });
+    }
     if (!resolved) {
       return {
         ok: false,
@@ -367,17 +390,13 @@ var replayer = (globalThis.TESTERIA_REPLAYER = globalThis.TESTERIA_REPLAYER || {
       };
     }
     var el = resolved.el;
-    if (!isVisible(el)) {
-      return { ok: false, error: "element ditemukan tapi tidak visible" };
-    }
     ensureVisible(el);
 
     switch (step.type) {
       case "click": {
         await vcMoveToEl(
           el,
-          step.dblclick ? "dblclick" : step.button === "right" ? "klik kanan" : "klik",
-          step.path
+          step.dblclick ? "dblclick" : step.button === "right" ? "klik kanan" : "klik"
         );
         if (typeof el.focus === "function") {
           try {

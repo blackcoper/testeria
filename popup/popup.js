@@ -14,9 +14,110 @@
   var listEl = document.getElementById("list");
   var emptyEl = document.getElementById("empty");
   var statusEl = document.getElementById("status");
-  var progressEl = document.getElementById("replay-progress");
   var importFileEl = document.getElementById("import-file");
+  var searchEl = document.getElementById("search");
+  var settingsEl = document.getElementById("settings");
+  var settingsBtn = document.getElementById("settings-btn");
+  var instantEl = document.getElementById("set-instant");
+  var cardEl = document.getElementById("replay-card");
+  var rcStop = document.getElementById("rc-stop");
+  var rcTitle = document.getElementById("rc-title");
+  var rcBadge = document.getElementById("rc-badge");
+  var rcFill = document.getElementById("rc-fill");
+  var rcSub = document.getElementById("rc-sub");
+  var rcError = document.getElementById("rc-error");
   var cachedRecordings = []; // render terakhir, untuk re-render inline (mis. batal rename)
+  var cachedSession = null;
+
+  // ---------------------------------------------------------------------------
+  // Settings (settings.replayInstant dsb.)
+  // ---------------------------------------------------------------------------
+  async function loadSettings() {
+    var res = await api.storage.local.get("settings");
+    var s = (res && res.settings) || {};
+    instantEl.checked = !!s.replayInstant;
+  }
+
+  instantEl.addEventListener("change", async function () {
+    var res = await api.storage.local.get("settings");
+    var s = Object.assign({}, (res && res.settings) || {});
+    s.replayInstant = instantEl.checked;
+    await api.storage.local.set({ settings: s });
+  });
+
+  settingsBtn.addEventListener("click", function () {
+    settingsEl.hidden = !settingsEl.hidden;
+  });
+
+  // ---------------------------------------------------------------------------
+  // Search filter
+  // ---------------------------------------------------------------------------
+  var searchQuery = "";
+  searchEl.addEventListener("input", function () {
+    searchQuery = searchEl.value.trim().toLowerCase();
+    render(cachedRecordings, cachedSession);
+  });
+
+  function matchesSearch(rec) {
+    if (!searchQuery) return true;
+    var hay = (rec.name + " " + (rec.group || "") + " " + (rec.startUrl || "")).toLowerCase();
+    return hay.indexOf(searchQuery) !== -1;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Replay status card (live, dari session.replay)
+  // ---------------------------------------------------------------------------
+  var REPLAY_BADGE = {
+    loading: "MEMUAT",
+    running: "REPLAY",
+    "waiting-password": "PASSWORD",
+    paused: "JEDA",
+    failed: "GAGAL",
+    done: "SELESAI"
+  };
+
+  // Replay "hidup" = perlu tombol Stop di popup (satu-satunya jalan keluar bila
+  // tab replay sudah ditutup user — tanpa ini replay menggantung selamanya dan
+  // replay baru selalu ditolak "replay-in-progress"; ditemukan saat playtest).
+  function replayIsActive(status) {
+    return ["loading", "running", "waiting-password", "paused", "failed"].indexOf(status) !== -1;
+  }
+
+  rcStop.addEventListener("click", async function () {
+    await api.runtime.sendMessage({ type: "TESTERIA_STOP_REPLAY" }).catch(function () {});
+  });
+
+  function renderReplayCard(replay) {
+    if (!replay || typeof replay !== "object") {
+      cardEl.hidden = true;
+      return;
+    }
+    rcStop.hidden = !replayIsActive(replay.status);
+    cardEl.hidden = false;
+    cardEl.className =
+      "replay-card" +
+      (replay.status === "failed" ? " failed" : "") +
+      (replay.status === "done" ? " done" : "");
+    rcTitle.textContent = replay.name || "replay";
+    rcBadge.textContent = REPLAY_BADGE[replay.status] || replay.status;
+    var total = replay.total || 0;
+    var cur = replay.index || 0;
+    if (replay.status === "done") {
+      rcFill.style.width = "100%";
+      rcSub.textContent = total + " step selesai ✓";
+    } else {
+      rcFill.style.width = total ? Math.round((Math.min(cur, total) / total) * 100) + "%" : "0%";
+      rcSub.textContent =
+        "step " + Math.min(cur + 1, total || 1) + "/" + total +
+        (replay.status === "paused" ? " — halaman bebas diedit, lanjutkan dari panel/popup" : "");
+    }
+    if (replay.error) {
+      rcError.hidden = false;
+      rcError.textContent = replay.error;
+    } else {
+      rcError.hidden = true;
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Render list
@@ -28,26 +129,6 @@
     } catch (e) {
       return String(ts);
     }
-  }
-
-  function describeReplay(replay) {
-    if (!replay) return null;
-    if (replay.status === "running") {
-      // replay.index 0-based = step yang sedang dieksekusi → tampil 1-based.
-      var current = Math.min((replay.index || 0) + 1, replay.total);
-      return "Replay — step " + current + "/" + replay.total;
-    }
-    if (replay.status === "paused") {
-      var cur = Math.min((replay.index || 0) + 1, replay.total || 0);
-      return "Dijeda — step " + cur + "/" + replay.total + " (utak-atik halaman, lalu Lanjutkan/Skip dari pill di halaman)";
-    }
-    if (replay.status === "failed") {
-      return "GAGAL " + (replay.error ? "— " + replay.error : "");
-    }
-    if (replay.status === "done") {
-      return "Selesai ✓ " + replay.total + " step";
-    }
-    return null;
   }
 
   // ---------------------------------------------------------------------------
@@ -193,6 +274,7 @@
 
   function render(recordings, session) {
     cachedRecordings = recordings;
+    cachedSession = session;
     listEl.textContent = "";
 
     // Status recording aktif
@@ -203,24 +285,24 @@
       statusEl.hidden = true;
     }
 
-    // Progress replay
-    var desc = describeReplay(session && session.replay);
-    if (desc) {
-      progressEl.hidden = false;
-      progressEl.textContent = desc;
-      progressEl.className =
-        "progress" +
-        (session.replay.status === "failed" ? " failed" : "") +
-        (session.replay.status === "done" ? " done" : "");
-    } else {
-      progressEl.hidden = true;
-    }
+    // Kartu status replay (live)
+    renderReplayCard(session && session.replay);
+
+    // Filter pencarian
+    var visible = recordings.filter(matchesSearch);
 
     if (!recordings.length) {
       emptyEl.hidden = false;
       return;
     }
-    emptyEl.hidden = true;
+    emptyEl.hidden = visible.length > 0;
+    if (!visible.length) {
+      listEl.appendChild(
+        el("div", { class: "empty-hint", style: "padding:14px;color:#5f6368;font-size:12px;text-align:center" },
+          "Tidak ada recording yang cocok dengan pencarian.")
+      );
+      return;
+    }
 
     // Saran grup untuk input editor (datalist global).
     var dl = document.getElementById("tst-groups");
@@ -242,13 +324,26 @@
     }
 
     // Tanpa grup: tampil rata di atas.
-    for (var i = 0; i < recordings.length; i++) {
-      if (!groupOf(recordings[i])) listEl.appendChild(itemNode(recordings[i], session));
+    for (var i = 0; i < visible.length; i++) {
+      if (!groupOf(visible[i])) listEl.appendChild(itemNode(visible[i], session));
     }
 
     // Bergrup: tree nested Proyek → Modul → case (collapsible).
-    var grouped = recordings.filter(function (r) { return !!groupOf(r); });
+    var grouped = visible.filter(function (r) { return !!groupOf(r); });
     if (grouped.length) renderTree(buildTree(grouped), listEl, session, 0);
+  }
+
+  function el(tag, attrs, text) {
+    var node = document.createElement(tag);
+    if (attrs) {
+      for (var k in attrs) {
+        if (k === "style") node.style.cssText = attrs[k];
+        else if (k === "class") node.className = attrs[k];
+        else node.setAttribute(k, attrs[k]);
+      }
+    }
+    if (text != null) node.textContent = text;
+    return node;
   }
 
   // ---------------------------------------------------------------------------
@@ -259,10 +354,13 @@
     var res = await api.runtime.sendMessage({ type: "TESTERIA_REPLAY", id: id });
     if (!res || !res.ok) {
       var err = res && res.error ? res.error : "replay gagal dimulai";
-      progressEl.hidden = false;
-      progressEl.className = "progress failed";
-      progressEl.textContent = err;
-      setTimeout(refresh, 2500);
+      statusEl.hidden = false;
+      statusEl.className = "status error";
+      statusEl.textContent = err;
+      setTimeout(function () {
+        statusEl.hidden = true;
+        statusEl.className = "status";
+      }, 3000);
       return; // jangan tutup popup — biarkan pesan error terbaca
     }
     window.close();
@@ -546,5 +644,6 @@
   });
 
   initVersion();
+  loadSettings();
   refresh();
 })();

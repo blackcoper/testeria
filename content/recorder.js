@@ -9,7 +9,8 @@
  * navigasi URL (SPA pushState/replaceState/popstate; full page load ditangani
  * background lewat PAGE_READY).
  *
- * Yang TIDAK direkam: scroll (v1), penekanan F8/Ctrl+Shift+Y (toggle sendiri),
+ * Yang TIDAK direkam: scroll (v1), jejak mouse (path) — kursor virtual replay
+ * kini bergerak glide halus tanpa jejak terekam, penekanan F8/Ctrl+Shift+Y (toggle sendiri),
  * event pada UI overlay Testeria sendiri, event SINTETIS buatan aplikasi
  * (isTrusted:false — komponen menu/accordion sering me-re-dispatch click;
  * tanpa filter ini satu klik terekam dua kali dan menu kebuka lalu ketutup
@@ -21,6 +22,12 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
 (function () {
   "use strict";
 
+  // IDEMPOTEN: executeScript recovery mengevaluasi ulang file ini. Tanpa guard,
+  // IIFE membuat `state` baru dan memasang listener KEDUA — setiap aksi user
+  // terekam ganda (ditemukan via E2E Playwright). Bila sudah terpasang,
+  // pertahankan state & listener lama apa adanya.
+  if (recorder.__installed) return;
+
   var api = globalThis.browser;
   var DEBOUNCE_MS = 500;
 
@@ -29,8 +36,6 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     timers: new WeakMap(), // elemen input -> id timer debounce
     lastValue: new WeakMap(), // elemen -> nilai terakhir yang SUDAH direkam
     pendingEls: [], // elemen dengan debounce aktif (untuk flushAllPending)
-    mouseTrail: [], // jejak mouse tersampel untuk animasi kursor saat replay
-    lastMoveSample: 0,
     installed: false,
     spaPatched: false
   };
@@ -45,8 +50,6 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
       state.timers = new WeakMap();
       state.lastValue = new WeakMap();
       state.pendingEls = [];
-      state.mouseTrail = [];
-      state.lastMoveSample = 0;
     }
   };
 
@@ -164,40 +167,6 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
   }
 
   // ---------------------------------------------------------------------------
-  // Jejak mouse (untuk animasi kursor virtual saat replay)
-  // ---------------------------------------------------------------------------
-  // Disampel tiap ±90 ms, dinormalisasi 0..1 terhadap viewport supaya tetap
-  // benar saat replay di ukuran jendela berbeda. Klik menyimpan salinan
-  // trail terakhir sebagai step.path (maks 16 titik).
-
-  var TRAIL_SAMPLE_MS = 90;
-  var TRAIL_MAX_POINTS = 24;
-  var TRAIL_STEP_POINTS = 16;
-
-  function onMouseMove(e) {
-    if (!state.recording || !isTrustedEvent(e) || fromOwnOverlay(e)) return;
-    var now = Date.now();
-    if (now - state.lastMoveSample < TRAIL_SAMPLE_MS) return;
-    state.lastMoveSample = now;
-    var vw = window.innerWidth || 1;
-    var vh = window.innerHeight || 1;
-    state.mouseTrail.push({
-      x: Math.round(((e.clientX || 0) / vw) * 1000) / 1000,
-      y: Math.round(((e.clientY || 0) / vh) * 1000) / 1000,
-      t: now
-    });
-    if (state.mouseTrail.length > TRAIL_MAX_POINTS) state.mouseTrail.shift();
-  }
-
-  /** Salinan trail terakhir (tanpa timestamp) untuk step, atau null. */
-  function trailSnapshot() {
-    if (state.mouseTrail.length < 2) return null;
-    return state.mouseTrail.slice(-TRAIL_STEP_POINTS).map(function (p) {
-      return { x: p.x, y: p.y };
-    });
-  }
-
-  // ---------------------------------------------------------------------------
   // Event listeners (capture, terpasang sekali)
   // ---------------------------------------------------------------------------
 
@@ -213,8 +182,6 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
       value: null,
       url: null
     };
-    var path = trailSnapshot();
-    if (path) step.path = path;
     sendStep(step);
   }
 
@@ -229,8 +196,6 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
       url: null,
       dblclick: true
     };
-    var path = trailSnapshot();
-    if (path) step.path = path;
     sendStep(step);
   }
 
@@ -245,8 +210,6 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
       url: null,
       button: "right"
     };
-    var path = trailSnapshot();
-    if (path) step.path = path;
     sendStep(step);
   }
 
@@ -332,7 +295,6 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     document.addEventListener("change", onChange, true);
     document.addEventListener("keydown", onKeyDown, true);
     document.addEventListener("blur", onBlur, true);
-    document.addEventListener("mousemove", onMouseMove, true);
     // Full page load: document dibongkar — flush ketikan yang belum terekam.
     // (step navigate untuk full load sendiri direkam background lewat PAGE_READY.)
     window.addEventListener("pagehide", function () {
@@ -392,25 +354,22 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     state.spaPatched = true;
     var lastHref = currentHref();
 
-    function wrap(fnName) {
+    // Navigasi SPA dari kode halaman datang lewat CustomEvent dari patch
+    // MAIN-world (content/spa-main.js, di-inject background). Listener di
+    // ISOLATED world ini menerima URL baru tanpa menyentuh objek halaman.
+    window.addEventListener("__testeria_spa", function (evt) {
       try {
-        var orig = history[fnName];
-        if (typeof orig !== "function") return;
-        history[fnName] = function () {
-          var r = orig.apply(this, arguments);
-          setTimeout(function () {
-            var now = currentHref();
-            if (now && now !== lastHref) {
-              lastHref = now;
-              sendNavigate(now);
-            }
-          }, 0);
-          return r;
-        };
+        var detail = evt.detail;
+        var url = typeof detail === "string" ? JSON.parse(detail).url : null;
+        if (url && url !== lastHref) {
+          lastHref = url;
+          sendNavigate(url);
+        }
       } catch (e) {}
-    }
-    wrap("pushState");
-    wrap("replaceState");
+    });
+
+    // popstate tetap bisa diintersep dari isolated world (event DOM menebus
+    // batas world). Fallback ini menangkap back/forward navigation.
     window.addEventListener("popstate", function () {
       setTimeout(function () {
         var now = currentHref();
@@ -430,4 +389,5 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     patchHistory();
   };
   recorder.init();
+  recorder.__installed = true;
 })();

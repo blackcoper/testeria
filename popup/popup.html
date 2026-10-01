@@ -13,11 +13,37 @@
     </div>
     <div class="header-actions">
       <button id="import-btn" class="btn btn-ghost" title="Import recording dari file JSON">Import</button>
+      <button id="settings-btn" class="btn btn-ghost" title="Pengaturan replay">⚙</button>
       <input id="import-file" type="file" accept="application/json,.json" hidden />
     </div>
   </header>
 
   <div id="status" class="status" hidden></div>
+
+  <section id="replay-card" class="replay-card" hidden>
+    <div class="rc-head">
+      <span id="rc-title" class="rc-title"></span>
+      <span id="rc-badge" class="rc-badge"></span>
+    </div>
+    <div class="rc-bar"><div id="rc-fill" class="rc-fill"></div></div>
+    <div id="rc-sub" class="rc-sub"></div>
+    <div id="rc-error" class="rc-error" hidden></div>
+    <button id="rc-stop" class="btn rc-stop" hidden title="Hentikan replay ini">Stop replay</button>
+  </section>
+
+  <div id="settings" class="settings" hidden>
+    <label class="set-row">
+      <input type="checkbox" id="set-instant" />
+      <span>
+        <strong>Instant mode</strong>
+        <small>Replay tanpa animasi kursor — untuk yang tidak sabar.</small>
+      </span>
+    </label>
+  </div>
+
+  <div class="searchbar">
+    <input id="search" type="search" placeholder="Cari recording…" autocomplete="off" />
+  </div>
 
   <main id="list" class="list" aria-label="Daftar recording"></main>
 
@@ -31,7 +57,6 @@
       <button id="export-all-btn" class="btn btn-ghost" title="Unduh semua recording sebagai JSON">Export All</button>
       <span id="ext-version" class="version" title="Versi Testeria"></span>
     </div>
-    <span id="replay-progress" class="progress" hidden></span>
   </footer>
 
   <script src="../shared/util.js"></script>

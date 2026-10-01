@@ -18,6 +18,12 @@
   var overlay = globalThis.TESTERIA_OVERLAY;
   var replayer = globalThis.TESTERIA_REPLAYER;
 
+  // Token unik per DOKUMEN — dikirim dengan setiap PAGE_READY sehingga
+  // background bisa membedakan "halaman sama, PAGE_READY ganda" dari
+  // "dokumen baru" (navigasi/reload). Acak per load content script; satu
+  // content script hidup untuk satu dokumen (navigasi full memuat ulang).
+  var DOC_TOKEN = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -159,7 +165,7 @@
   // ---------------------------------------------------------------------------
   try {
     api.runtime
-      .sendMessage({ type: "TESTERIA_PAGE_READY", url: String(location.href) })
+      .sendMessage({ type: "TESTERIA_PAGE_READY", url: String(location.href), docToken: DOC_TOKEN })
       .catch(function () {});
   } catch (e) {}
 
@@ -172,6 +178,13 @@
     if (!msg || typeof msg.type !== "string") return;
 
     switch (msg.type) {
+      case "TESTERIA_PING": {
+        // Dipakai background untuk memutuskan apakah content script perlu
+        // di-re-inject (recovery). Jawab tanpa efek samping.
+        sendResponse({ ok: true });
+        return;
+      }
+
       case "TESTERIA_REC_STATE": {
         applyRecording(!!msg.recording);
         sendResponse({ ok: true });
@@ -190,9 +203,7 @@
         overlay.showSaveModal(msg.steps || [], msg.startUrl || null);
         sendResponse({ ok: true });
         return;
-      }
-
-      case "TESTERIA_REPLAY_RUN": {
+      }      case "TESTERIA_REPLAY_RUN": {
         lastReplayActivity = Date.now();
         // Mode visual replay: kursor virtual + ambient hanya selama Testeria
         // aktif mengoperasikan halaman (step berjalan).
@@ -201,6 +212,16 @@
             overlay.ambientStart();
           }
           if (typeof overlay.cursorStart === "function") overlay.cursorStart();
+        }
+        // Password (masked): prompt interaktif JANGAN menahan channel pesan
+        // terbuka selama user mengetik — jawab sekarang, lapor hasil belakangan
+        // via TESTERIA_STEP_DONE (tahan terhadap SW reload; dulu replay
+        // mangkrak di sini kalau SW reload atau channel tertutup).
+        if (msg.step && msg.step.type === "input" && msg.step.masked) {
+          runPasswordStep(msg.step, msg.stepNumber, msg.total)
+            .catch(function () {});
+          sendResponse({ ok: true, waitPassword: true });
+          return true;
         }
         runReplayStep(msg.step, msg.stepNumber, msg.total)
           .then(function (result) {
@@ -211,7 +232,7 @@
           .catch(function (e) {
             try {
               sendResponse({ ok: false, error: (e && e.message) || String(e) });
-            } catch (e2) {}
+          } catch (e2) {}
           });
         return true; // async
       }
@@ -222,24 +243,44 @@
   });
 
   async function runReplayStep(step, stepNumber, total) {
+    // Panel diperbarui via storage.onChanged → renderReplayPanel; ini fallback
+    // bila perubahan session belum terpantau saat step dieksekusi.
     if (overlay && overlay.showReplayProgress) {
       overlay.showReplayProgress(stepNumber, total);
     }
     if (!replayer || typeof replayer.executeStep !== "function") {
       return { ok: false, error: "replayer belum siap di halaman ini" };
     }
+    return replayer.executeStep(step);
+  }
 
-    // Password (masked): minta user isi manual — nilai tak pernah disimpan.
-    if (step && step.type === "input" && step.masked && overlay) {
+  /**
+   * Step password: tampilkan prompt, tunggu user (TANPA menahan channel
+   * pesan), isi field, lalu laporkan hasil via TESTERIA_STEP_DONE. Bila user
+   * membatalkan (Escape/Batal), laporkan kegagalan eksplisit — jangan pernah
+   * menggantung replay tanpa pesan.
+   */
+  async function runPasswordStep(step, stepNumber, total) {
+    try {
+      if (overlay && overlay.showReplayProgress) {
+        overlay.showReplayProgress(stepNumber, total || 0);
+      }
       var typed = await overlay.showPasswordPrompt(stepNumber);
       if (typed == null) {
-        return { ok: false, error: "dibatalkan user pada prompt password" };
+        api.runtime
+          .sendMessage({ type: "TESTERIA_STEP_DONE", ok: false, error: "dibatalkan user pada prompt password", stepIndex: stepNumber - 1 })
+          .catch(function () {});
+        return;
       }
-      var filled = await replayer.fillInput(step.selector, typed);
-      return filled;
+      var res = await replayer.fillInput(step.selector, typed);
+      api.runtime
+        .sendMessage({ type: "TESTERIA_STEP_DONE", ok: !!(res && res.ok), error: res && res.error ? res.error : null, stepIndex: stepNumber - 1 })
+        .catch(function () {});
+    } catch (e) {
+      api.runtime
+        .sendMessage({ type: "TESTERIA_STEP_DONE", ok: false, error: (e && e.message) || String(e), stepIndex: stepNumber - 1 })
+        .catch(function () {});
     }
-
-    return replayer.executeStep(step);
   }
 
   function stopReplayFx() {
@@ -249,14 +290,83 @@
     if (typeof ov.cursorStop === "function") ov.cursorStop();
   }
 
+  /** Render panel replay (progress + daftar task + aksi) dari state session. */
+  function renderReplayPanel(replay) {
+    var ov = globalThis.TESTERIA_OVERLAY;
+    if (!ov || !replay || typeof replay !== "object") return;
+    var opts = {
+      name: replay.name,
+      status: replay.status,
+      current: replay.status === "done" ? null : replay.index,
+      total: replay.total || 0,
+      labels: replay.labels || [],
+      error: replay.error,
+      failedStep: typeof replay.failedStep === "number" ? replay.failedStep : null,
+      notice: replay.notice || null,
+      onJump: function (n) {
+        api.runtime.sendMessage({ type: "TESTERIA_REPLAY_JUMP_TO", step: n }).catch(function () {});
+      },
+      onAction: function (a) {
+        var map = {
+          pause: "TESTERIA_REPLAY_PAUSE",
+          resume: "TESTERIA_REPLAY_RESUME",
+          skip: "TESTERIA_REPLAY_SKIP",
+          stop: "TESTERIA_STOP_REPLAY",
+          retry: "TESTERIA_REPLAY_RETRY"
+        };
+        if (map[a]) api.runtime.sendMessage({ type: map[a] }).catch(function () {});
+      }
+    };
+    if (typeof ov.showReplayPanel === "function") {
+      ov.showReplayPanel(opts);
+    }
+    if (replay.status === "failed" || replay.status === "done") {
+      stopReplayFx();
+    }
+  }
+
   // ---------------------------------------------------------------------------
-  // Sinkronisasi status lewat storage.onChanged (robust terhadap SW reload):
+  // Sinkronisasi lewat storage.onChanged (robust terhadap SW reload):
   //   - recording on/off → REC dot
-  //   - replay failed/done → pill di tab replay aktif
+  //   - replay state apa pun → panel replay (running/paused/waiting/failed/done)
+  //   - settings.replayInstant → instant mode kursor
   // ---------------------------------------------------------------------------
+  function syncInstantMode(settings) {
+    var ov = globalThis.TESTERIA_OVERLAY;
+    if (ov && typeof ov.setInstantMode === "function") {
+      ov.setInstantMode(!!(settings && settings.replayInstant));
+    }
+  }
+
+  /**
+   * Apakah replay state ini milik DOKUMEN ini? Background menyimpan
+   * docToken dari PAGE_READY dokumen replay — token yang cocok berarti tab
+   * ini tab replay, SEBELUM step pertama dieksekusi. Dulu panel baru muncul
+   * setelah RUN pertama (gate lastReplayActivity) — selama delayMs awal
+   * halaman tanpa panel sama sekali dan Pause/Skip tak bisa diklik.
+   */
+  function ownReplayDoc(replay) {
+    return typeof replay.docToken === "string" && replay.docToken === DOC_TOKEN;
+  }
+
+  try {
+    api.storage.local.get("settings").then(function (r) {
+      syncInstantMode(r && r.settings);
+    }).catch(function () {});
+    // Render ulang panel bila halaman di-reload di tengah replay aktif.
+    api.storage.local.get("session").then(function (r) {
+      var s = r && r.session;
+      if (s && s.replay && ownReplayDoc(s.replay)) {
+        renderReplayPanel(s.replay);
+      }
+    }).catch(function () {});
+  } catch (e) {}
+
   try {
     api.storage.onChanged.addListener(function (changes, area) {
-      if (area !== "local" || !changes.session) return;
+      if (area !== "local") return;
+      if (changes.settings) syncInstantMode(changes.settings.newValue);
+      if (!changes.session) return;
       var nv = changes.session.newValue;
       var ov = globalThis.TESTERIA_OVERLAY;
       if (!nv || typeof nv !== "object" || !ov) return;
@@ -267,23 +377,14 @@
         applyRecording(!!nv.recording);
       }
 
-      // Replay outcome
+      // Replay state → panel. Render bila replay ini milik dokumen ini
+      // (docToken cocok — berlaku sejak PROMOSI loading→running, sebelum step
+      // pertama), atau fallback heuristik aktivitas terakhir untuk state lama
+      // tanpa token. Tab lain tidak menampilkan panel yang tidak relevan.
       var replay = nv.replay;
       var fresh = Date.now() - lastReplayActivity < 120000;
       if (replay && typeof replay === "object") {
-        if (replay.status === "failed" && fresh && replay.error) {
-          ov.showReplayFailure(String(replay.error));
-          stopReplayFx();
-        } else if (replay.status === "done" && fresh) {
-          ov.showReplayDone();
-          stopReplayFx();
-        } else if (replay.status === "paused" && fresh) {
-          // Dijeda di antara step: halaman bebas diedit user.
-          if (typeof ov.showReplayPaused === "function") {
-            var cur = Math.min((replay.index || 0) + 1, replay.total || 0);
-            ov.showReplayPaused(cur, replay.total || 0);
-          }
-        }
+        if (ownReplayDoc(replay) || fresh) renderReplayPanel(replay);
       } else if (replay == null && fresh) {
         // Replay di-stop user → matikan visual mode replay.
         stopReplayFx();

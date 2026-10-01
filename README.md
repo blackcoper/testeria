@@ -1,6 +1,6 @@
 # Testeria
 
-**Record & replay user actions di browser** — proof of concept (v1), bukan tool test automation lengkap.
+**Record & replay user actions di browser** — proof of concept (v0.2), bukan tool test automation lengkap.
 
 Tekan **F8** (atau **Ctrl+Shift+Y**) di halaman web untuk mulai merekam klik, input, dan navigasi. Tekan lagi untuk berhenti, beri nama, lalu replay dari popup toolbar dengan progress per step.
 
@@ -45,16 +45,26 @@ Vanilla JS, tanpa build step, tanpa framework. Jalan di Chrome/Edge/Brave/Chromi
 manifest.json            MV3 lintas browser: background scripts (event page) + service_worker
 shared/util.js           alias browser.* (browser ??= chrome), helper storage.local, id
 background/background.js state session (storage.local), message router,
-                         record lifecycle, replay driver (progress + failure), badge REC
-content/overlay.js       Shadow DOM: titik REC, modal nama, pill progress/kegagalan, prompt password
+                         record lifecycle, replay driver (lifecycle loading→running→done/failed,
+                         watchdog start, jump-to-step, password via STEP_DONE), badge REC
+content/overlay.js       Shadow DOM: titik REC, modal nama, panel replay + daftar task,
+                         kursor virtual (glide), prompt password, quick menu F9
 content/selector.js      generator selector multi-kandidat (lihat bawah)
-content/recorder.js      capture event → step (debounce input, mask password, SPA navigate)
-content/replayer.js      resolve kandidat berurutan, native value setter + dispatch input/change
-content/main.js          entry: guard re-inject, fallback keydown F8/Ctrl+Shift+Y, PAGE_READY, router content
-popup/                   list recording + Replay/Rename/Delete + Export/Import JSON
+content/recorder.js      capture event → step (debounce input, mask password)
+content/spa-main.js      patch pushState/replaceState di MAIN world (di-inject background;
+                         dipicu CustomEvent → recorder menandai step navigate)
+content/replayer.js      resolve kandidat berurutan (menunggu visible), native value setter
+                         + dispatch input/change
+content/main.js          entry: guard re-inject, fallback keydown F8/Ctrl+Shift+Y, PAGE_READY,
+                         router content, render panel replay dari state
+popup/                   list recording + search + kartu status replay + settings (instant mode)
+                         + Replay/Rename/Grup/Delete + Export/Import JSON
 ```
 
 - **Satu file background** untuk event page (Firefox/Safari) dan service worker (Chrome) — bebas DOM API (`window`, `Blob`); Export memakai Blob di popup, bukan di background.
+- **`importScripts("/shared/util.js")` memakai path absolut** — path relatif di-resolve terhadap URL worker (`/background/`) dan 404, membunuh seluruh background Chrome MV3 secara diam-diam.
+- **SPA navigate direkam via patch MAIN world** (`content/spa-main.js`): `history.pushState` milik halaman tidak bisa diintersep dari isolated world (wrapper JS berbeda per world). Patch mengirim `CustomEvent` yang didengar recorder.
+- **Content script idempoten**: `recorder.__installed` + ping `TESTERIA_PING` sebelum re-inject — executeScript recovery tidak lagi menggandakan listener (dulu setiap aksi terekam dua kali setelah toggle via keyboard).
 - **Semua state persisten** (`session`, `recordings`) di `browser.storage.local` — bukan variabel background, karena event page/SW bisa di-unload kapan saja.
 - **100% `browser.*`** — alias 3 baris di `shared/util.js`; Chrome ≥148 dan Firefox punya `browser` native.
 - **Password**: value asli tidak pernah disimpan. Saat recording disimpan `"<masked>"` + `masked: true`; saat replay, modal meminta user mengisi manual sekali (nilai sekali pakai, tidak disimpan).
@@ -75,6 +85,20 @@ popup/                   list recording + Replay/Rename/Delete + Export/Import J
 - Saat replay, step `navigate` melewati sleep `delayMs` — jeda tidak berlaku untuk navigasi (pindah halaman menggantikan jeda).
 - Step data murni (JSON) — tidak ada JS yang dieval.
 
+### Replay: lifecycle, panel task, password
+
+- **Lifecycle replay**: `loading` (tab dibuka, halaman belum siap) → `running` ⇄ `paused` / `waiting-password` → `done` | `failed`. PAGE_READY meng-adopsi tab replay; **watchdog 12 detik** me-re-inject content script bila halaman tak pernah siap (redirect klien super cepat / injection telat) — replay tidak pernah mangkrak diam-diam saat mulai.
+- **Pause/Skip efektif di tengah jeda**: jeda `delayMs` antar step dan retry kirim di-polling ~100 ms — Pause, Skip (saat running pun), dan Stop terasa instan, bukan setelah jeda selesai.
+- **Guard reload di tengah step**: setiap dokumen mengirim token acak + URL saat PAGE_READY. Bila halaman di-RELOAD (URL sama) persis saat ada step yang sedang dieksekusi, replay tidak lanjut buta di halaman yang sudah di-reset (klik bisa double-submit) — replay di-pause dengan notice kuning; **Lanjutkan** mengulang step itu, **Skip** melewatinya. Redirect antar halaman (URL beda) tetap berlanjut otomatis.
+- **Panel task di halaman** (kanan bawah): daftar semua step dengan label yang bisa dibaca, step aktif ditandai, dan **klik step mana pun untuk mulai ulang dari step itu** (berguna saat halaman belum siap / elemen gagal render / step error). Tombol Pause / Lanjutkan / Skip / Ulangi step / Stop tersedia sesuai status. Tombol **× mengecilkan panel** jadi pill status kecil (klik pill untuk membuka lagi) — replay TETAP jalan. Panel ini re-render dari state storage — tahan terhadap reload halaman maupun service worker.
+- **Password (masked)**: prompt tidak lagi menahan channel pesan. Content script menjawab segera, user mengisi dengan tenang, hasilnya dilaporkan lewat message `TESTERIA_STEP_DONE` yang tetap valid meski service worker reload di tengah menunggu. Batal = gagal eksplisit, tidak pernah menggantung.
+- **Instant mode**: pengaturan di popup (⚙) — replay tanpa animasi kursor untuk yang tidak sabar. Default: animasi glide halus.
+- **Pengaturan** disimpan di `storage.local` key `settings` (mis. `replayInstant: true`).
+
+### Kursor virtual replay
+
+Kursor bergerak **glide ease-in-out langsung menuju target** (180–900 ms sesuai jarak) — tanpa jejak polyline dan tanpa rekonstruksi jalur mouse lama yang menyebabkan lompatan/blink. Bentuk menyesuaikan (I-beam di atas field teks), label aksi tetap tampil, ripple di tiap klik, dan ambient rainbow di tepi viewport saat replay berjalan. `prefers-reduced-motion` dihormati pada ambient.
+
 ### Strategi selector (generate, berurutan)
 1. `data-testid` / `data-test` / `data-cy` / `id` — id dengan pola auto-generated (digit-dense, hex, `:r1:`, prefix framework) ditolak.
 2. `[name]`, `[aria-label]`, `[placeholder]`, `role` + teks accessible.
@@ -86,11 +110,27 @@ Kandidat diverifikasi resolve ke tepat 1 elemen saat record; saat replay dicoba 
 Set nilai input memakai **native value setter** dari prototype yang benar (`HTMLInputElement.prototype.value`) lalu dispatch `input` + `change` ber-bubbles — sehingga listener React/Vue/Angular ikut terpicu. Checkbox/radio toggle native `click()` sehingga event browser asli ikut. `isTrusted:false` artinya beberapa default browser tidak terpicu (mis. submit form native via Enter) — lihat batasan di bawah.
 
 ### Visual mode replay (kursor virtual + ambient)
-Selama replay berjalan, halaman menampilkan **kursor virtual** khas Testeria (kelopak SVG gradien ungu–pink–oranye dengan orbit kecil — bukan panah umum) yang **menyusuri jejak mouse asli Anda saat recording** (animasi requestAnimationFrame dengan easing, kecepatan ~1.4 px/ms, jejak polyline gradien mengikuti lalu memudar) dengan **label `Testeria: <aksi>`** (klik/ketik/centang/pilih/dll.), berubah menjadi **I-beam gradien** otomatis saat berada di atas field teks, dan memancarkan **ripple** di tiap klik. Di tepi viewport tampil **tiga bingkai gradient berputar** (cincin conic-gradient 6/14/22 px, arah dan kecepatan beragam + hue-rotate cepat sehingga warna terus berganti; hormat pada `prefers-reduced-motion`) menandai bahwa AI/extension sedang mengoperasikan browser. Keduanya hidup hanya saat step replay dieksekusi dan mati otomatis saat selesai/gagal/di-stop — dirender dalam Shadow DOM yang sama, tanpa CSS global, tanpa permission tambahan.
+Selama replay berjalan, halaman menampilkan **kursor virtual** khas Testeria (kelopak SVG gradien ungu–pink–oranye dengan orbit kecil — bukan panah umum) yang **meluncur halus ease-in-out langsung ke target** (180–900 ms sesuai jarak, tanpa rekonstruksi jejak lama yang dulu menyebabkan lompatan/blink) dengan **label `Testeria: <aksi>`** (klik/ketik/centang/pilih/dll.), berubah menjadi **I-beam gradien** otomatis saat berada di atas field teks, dan memancarkan **ripple** di tiap klik. Di tepi viewport tampil **tiga bingkai gradient berputar** (cincin conic-gradient 6/14/22 px, arah dan kecepatan beragam + hue-rotate cepat sehingga warna terus berganti; hormat pada `prefers-reduced-motion`) menandai bahwa AI/extension sedang mengoperasikan browser. Keduanya hidup hanya saat step replay dieksekusi dan mati otomatis saat selesai/gagal/di-stop — dirender dalam Shadow DOM yang sama, tanpa CSS global, tanpa permission tambahan.
 
-Gerakan mouse **tidak direkam sebagai step terpisah** — hanya disampel sebagai jejak (tiap ±90 ms, maks 16 titik, ternormalisasi 0–1 terhadap viewport) yang dilampirkan pada step klik (`path`) untuk dianimasikan saat replay; scroll tetap tidak direkam.
+Gerakan mouse **tidak direkam sama sekali** sebagai step maupun jejak — hanya titik tengah elemen target yang dipakai; scroll juga tidak direkam.
 
 ---
+
+## Testing (E2E)
+
+Folder `test/` berisi harness Playwright (Chromium + extension dimuat unpacked) dan **fake CMS** (`test/app.js`) sebagai target uji: login form, SPA dashboard dengan delayed-render 2,5 dtk, client redirect, multi-page form.
+
+```bash
+cd test && npm install && npx playwright install chromium
+node run-all.js        # 5 suite: record, replay, panel+jump+instant, start-race, playtest
+```
+
+Cakupan suite:
+1. **test-record** — record klik/input/select/check/navigate, password termask `"<masked>"`.
+2. **test-replay** — replay via popup: prompt password, select, navigate, klik elemen delayed-render → `done`.
+3. **test-panel** — panel daftar task tampil, jump-to-step menjalankan ulang dari step terpilih, instant mode persist.
+4. **test-race** — regresi bug start: startUrl me-redirect diri; step jalan di halaman tujuan; navigate + delayed click lolos.
+5. **test-playtest** — 11 skenario careless-user di surface nyata: pause/resume (termasuk di tengah `delayMs`), skip saat running memotong jeda (step ter-skip tidak jalan), batal password → failed eksplisit → retry/skip, stop, Escape prompt, tab ditutup saat waiting → recovery popup, reload tengah replay, **guard reload mid-step → paused + notice → Lanjutkan jalan di dokumen baru**, × kecilkan panel → pill → restore.
 
 ## Known limitations v1 (di luar scope, sengaja tidak dikerjakan)
 

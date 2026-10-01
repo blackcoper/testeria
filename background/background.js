@@ -14,7 +14,11 @@
  */
 if (typeof importScripts === "function") {
   /* eslint-disable-next-line no-undef */
-  importScripts("shared/util.js");
+  // PENTING: path HARUS absolut ("/shared/util.js"). Path relatif di-resolve
+  // terhadap URL worker (…/background/background.js) → …/background/shared/
+  // util.js 404 → importScripts melempar error → SELURUH background mati
+  // diam-diam di Chrome MV3 (semua runtime.sendMessage manggut tanpa jawaban).
+  importScripts("/shared/util.js");
 }
 
 var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
@@ -41,6 +45,16 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
   // ---------------------------------------------------------------------------
   // Record lifecycle
   // ---------------------------------------------------------------------------
+
+  /** Cek cepat: content script Testeria sudah hidup di tab ini? */
+  async function contentAlive(tabId) {
+    try {
+      const res = await api.tabs.sendMessage(tabId, { type: "TESTERIA_PING" });
+      return !!(res && res.ok);
+    } catch (e) {
+      return false;
+    }
+  }
 
   /** Mulai recording di tab tertentu. */
   bg.startRecording = async function (tabId, url) {
@@ -165,23 +179,39 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
     var start = await bg.startRecording(target.id, target.url);
     if (!start.ok) return start;
 
-    // Pastikan content script hidup di tab target (jalur pemulihan; kalau sudah
-    // ada, guard re-inject TESTERIA membuatnya no-op).
+    // Pastikan content script hidup di tab target — PING dulu, inject hanya
+    // bila tak ada jawaban. Re-inject buta menyebabkan listener ganda (state
+    // modul IIFE ikut ter-reset) meski tiap file punya guard.
+    if (!(await contentAlive(target.id))) {
+      try {
+        await api.scripting.executeScript({
+          target: { tabId: target.id, allFrames: false },
+          files: [
+            "shared/util.js",
+            "content/overlay.js",
+            "content/selector.js",
+            "content/recorder.js",
+            "content/replayer.js",
+            "content/main.js"
+          ]
+        });
+      } catch (e) {
+        /* Halaman yang melarang injection (mis. web store) — recording tetap
+           aktif; content script akan ikut saat navigasi berikutnya. */
+      }
+    }
+    // Patch history di MAIN world — pushState dari kode halaman tidak terlihat
+    // dari isolated world (world berbeda → wrapper JS berbeda). Tanpa ini,
+    // navigasi SPA tidak terekam sama sekali.
     try {
       await api.scripting.executeScript({
         target: { tabId: target.id, allFrames: false },
-        files: [
-          "shared/util.js",
-          "content/overlay.js",
-          "content/selector.js",
-          "content/recorder.js",
-          "content/replayer.js",
-          "content/main.js"
-        ]
+        world: "MAIN",
+        files: ["content/spa-main.js"]
       });
     } catch (e) {
-      /* Halaman yang melarang injection (mis. web store) — recording tetap
-         aktif; content script akan ikut saat navigasi berikutnya. */
+      /* Firefox lama tanpa world: MAIN — SPA SPA-recording degrade ke popstate
+         saja; fitur lain tetap jalan. */
     }
 
     // Sinkronkan state ke content script tab target (REC dot).
@@ -231,6 +261,12 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
    * script, lalu kirim step berjalan. Driver tetap hidup selama ada await
    * berantai; untuk navigasi antar-halaman, kelanjutan dipicu message
    * REPLAY_PAGE_READY dari content script (bukan loop yang menggantung).
+   *
+   * Status lifecycle: loading → running ⇄ paused | waiting-password →
+   * done | failed. "loading" = tab dibuka, halaman belum siap. PAGE_READY
+   * meng-adopsi tab lalu status naik ke "running". Watchdog 12 dtk menangkap
+   * PAGE_READY yang hilang (redirect cepat / injection telat) dengan
+   * me-re-inject content script lalu langsung menjalankan driver.
    */
   bg.startReplay = async function (recordingId) {
     var recordings = await T.getRecordings();
@@ -246,7 +282,10 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
 
     var session = await T.getSession();
     if (session.recording) return { ok: false, error: "recording-in-progress" };
-    if (session.replay && (session.replay.status === "running" || session.replay.status === "paused")) {
+    if (
+      session.replay &&
+      ["running", "paused", "waiting-password", "loading"].indexOf(session.replay.status) !== -1
+    ) {
       return { ok: false, error: "replay-in-progress" };
     }
 
@@ -255,14 +294,90 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
       name: rec.name,
       index: 0,           // step berikutnya yang harus dieksekusi (0-based)
       total: rec.steps.length,
-      status: "running",
+      status: "loading",
       error: null,
-      tabId: null
+      tabId: null,
+      // Reset penuh field temporer — setReplayState menambal objek replay
+      // LAMA (sisa replay done/failed sebelumnya); tanpa ini sisa
+      // docToken/startedIndex/notice replay lama bocor ke yang baru.
+      docToken: null,
+      docUrl: null,
+      startedIndex: null,
+      notice: null,
+      failedStep: null,
+      labels: rec.steps.map(bg.labelForStep) // untuk daftar task di panel/popup
     });
 
-    var tab = await api.tabs.create({ url: rec.startUrl, active: true });
+    var tab;
+    try {
+      tab = await api.tabs.create({ url: rec.startUrl, active: true });
+    } catch (e) {
+      await bg.failReplay("gagal membuka tab replay (" + e.message + ").");
+      return { ok: false, error: "tab-create-failed" };
+    }
     await bg.setReplayState({ tabId: tab.id });
+
+    // Watchdog: bila PAGE_READY tak kunjung datang (redirect klien super cepat
+    // sampai content script keburu mati, injection telat, dsb.), coba re-inject
+    // lalu jalankan driver langsung — jangan biarkan replay menggantung diam.
+    setTimeout(async function () {
+      try {
+        var s = await T.getSession();
+        if (!s.replay || s.replay.status !== "loading" || s.replay.tabId !== tab.id) return;
+        try {
+          await api.scripting.executeScript({
+            target: { tabId: tab.id, allFrames: false },
+            files: [
+              "shared/util.js",
+              "content/overlay.js",
+              "content/selector.js",
+              "content/recorder.js",
+              "content/replayer.js",
+              "content/main.js"
+            ]
+          });
+        } catch (e) {
+          await bg.failReplay(
+            "Halaman replay tidak merespons (content script tidak bisa di-inject). Coba lagi."
+          );
+          return;
+        }
+        var s2 = await T.getSession();
+        if (!s2.replay || s2.replay.status !== "loading") return;
+        await bg.setReplayState({ status: "running" });
+        bg.resumeDriver(tab.id);
+      } catch (e) {
+        /* SW reload di tengah watchdog — biarkan. */
+      }
+    }, 12000);
+
     return { ok: true, total: rec.steps.length };
+  };
+
+  /** Label pendek satu step untuk daftar task. */
+  bg.labelForStep = function (step) {
+    var sel = step && step.selector ? step.selector : null;
+    var target =
+      (sel && (sel.css || (sel.alt && sel.alt[0] && sel.alt[0].css) || "")) || "";
+    var text = sel && sel.text ? ' "' + String(sel.text).slice(0, 16) + '"' : "";
+    var t = String(target).replace(/\[.*$/, "").slice(0, 24);
+    switch (step && step.type) {
+      case "navigate":
+        return "→ " + String(step.url || step.value || "").replace(/^https?:\/\//, "").slice(0, 30);
+      case "input":
+        return (step.masked ? "password " : "isi ") + (t || text || "field");
+      case "select":
+        return "pilih " + (t || "dropdown") + (step.value ? " = " + String(step.value).slice(0, 12) : "");
+      case "check":
+        return (step.value === "checked" ? "centang " : "lepas ") + (t || "checkbox");
+      case "key":
+        return "tombol " + String(step.value || "");
+      case "click":
+        return (step.dblclick ? "klik 2x " : step.button === "right" ? "klik kanan " : "klik ") +
+          (text.trim() ? text.trim().slice(0, 18) : t || "elemen");
+      default:
+        return (step && step.type) || "step";
+    }
   };
 
   /** Ringkasan step untuk pesan error. */
@@ -278,14 +393,94 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
   };
 
   /**
+   * Jalankan driver replay dari state session saat ini, dengan penanganan
+   * kegagalan konsisten. SEMUA titik resume driver memakai helper ini —
+   * sebelumnya boilerplate runReplayFrom(...).catch(failReplay("Replay
+   * terputus…")) disalin 8× dan salah satu salinannya pasti berbeda.
+   */
+  bg.resumeDriver = function (tabId) {
+    bg.runReplayFrom(tabId).catch(function (e) {
+      bg.failReplay("Replay terputus: " + (e && e.message ? e.message : e));
+    });
+  };
+
+  /**
+   * Checkpoint driver: apakah replay masih hidup, running, di tab ini, dan
+   * index belum digeser? Dipanggil di SETIAP titik driver bisa kalah balapan
+   * dengan Pause/Skip/Stop — awal iterasi, setelah jeda, di antara retry
+   * kirim. Return:
+   *   "ok"      → lanjut eksekusi
+   *   "stop"    → replay di-pause/stop/clear — flags dibersihkan, keluar diam
+   *   "handoff" → index digeser (SKIP saat running) — flags dibersihkan dan
+   *               driver baru diluncurkan dari index terbaru; keluar
+   */
+  async function driverCheckpoint(tabId, index) {
+    var s = await T.getSession();
+    if (!s.replay || s.replay.status !== "running" || s.replay.tabId !== tabId) {
+      replayDriverActive = false;
+      replayDriverIndex = -1;
+      return "stop";
+    }
+    if ((s.replay.index || 0) !== index) {
+      replayDriverActive = false;
+      replayDriverIndex = -1;
+      bg.resumeDriver(tabId);
+      return "handoff";
+    }
+    return "ok";
+  }
+
+  /**
+   * Jeda step yang BISA diinterupsi: Pause/Skip/Stop di tengah delayMs
+   * (hingga 2000 ms) efektif dalam ~100 ms, bukan setelah jeda selesai.
+   * Polling session tiap ~100 ms — session adalah sumber kebenaran bersama
+   * (SW-safe), tidak ada kanal cancellable khusus yang harus di-supervise.
+   * Resolve false bila checkpoint gagal (flags sudah dibersihkan) — pemanggil
+   * tinggal keluar tanpa mengeksekusi step.
+   */
+  async function interruptibleWait(ms, tabId, index) {
+    var wake = Date.now() + ms;
+    while (Date.now() < wake) {
+      await T.sleep(Math.min(100, wake - Date.now()));
+      if ((await driverCheckpoint(tabId, index)) !== "ok") return false;
+    }
+    return true;
+  }
+
+  /**
+   * Tulis status "running" untuk iterasi step index — KECUALI bila guard
+   * reload menandai pendingPause (dokumen baru melapor saat ada step
+   * in-flight yang nasibnya tidak jelas). Tanpa ini, tulisan driver bisa
+   * menimpa pause hasil guard (race PAGE_READY vs re-send retry) dan replay
+   * melanjutkan buta di halaman yang sudah di-reset.
+   * Return false bila driver harus keluar (flags sudah dibersihkan).
+   */
+  async function runWrite(tabId, index) {
+    var s = await T.getSession();
+    if (!s.replay || s.replay.tabId !== tabId || s.replay.pendingPause) {
+      replayDriverActive = false;
+      replayDriverIndex = -1;
+      return false;
+    }
+    await bg.setReplayState({ index: index, status: "running", error: null });
+    return true;
+  }
+
+  /**
    * Lanjutkan replay dari step index pada tab yang baru melapor PAGE_READY.
    * Dipanggil dari REPLAY_PAGE_READY. Serial, satu step per saat.
    */
   bg.runReplayFrom = async function (tabId) {
     var session = await T.getSession();
     var replay = session.replay;
-    if (!replay || replay.status !== "running") return;
+    // "loading" diterima: PAGE_READY pertama tab replay menaikkan status ke
+    // "running" di sini (satu titik promosi — dulu replay mangkrak selamanya
+    // di "loading" karena tidak ada yang mempromosikannya).
+    if (!replay || ["running", "loading"].indexOf(replay.status) === -1) return;
     if (replay.tabId !== tabId) return; // bukan tab replay
+    if (replay.status === "loading") {
+      await bg.setReplayState({ status: "running" });
+    }
 
     var recordings = await T.getRecordings();
     var rec = null;
@@ -308,23 +503,8 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
       replayDriverIndex = index;
 
       // Liveness + konsistensi index: Pause/Skip/Stop bisa mengubah state
-      // di tengah jalan. Kalau status bukan running → berhenti total; kalau
-      // index digeser (SKIP saat driver masih menunggu) → serahkan eksekusi
-      // ke driver baru dari index terbaru.
-      var sLive = await T.getSession();
-      if (!sLive.replay || sLive.replay.status !== "running" || sLive.replay.tabId !== tabId) {
-        replayDriverActive = false;
-        replayDriverIndex = -1;
-        return;
-      }
-      if ((sLive.replay.index || 0) !== index) {
-        replayDriverActive = false;
-        replayDriverIndex = -1;
-        bg.runReplayFrom(tabId).catch(function (e) {
-          bg.failReplay("Replay terputus: " + (e && e.message ? e.message : e));
-        });
-        return;
-      }
+      // di tengah jalan (lihat driverCheckpoint).
+      if ((await driverCheckpoint(tabId, index)) !== "ok") return;
 
       // Kompatibilitas recording lama: komponen menu/dropdown/accordion kadang
       // me-re-dispatch klik sintetis yang ikut terekam sebagai pasangan step
@@ -346,11 +526,10 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
         }
       }
 
-      await bg.setReplayState({
-        index: index,
-        status: "running",
-        error: null
-      });
+      // Liveness + konsistensi index: Pause/Skip/Stop bisa mengubah state
+      // di tengah jalan (lihat driverCheckpoint). runWrite menghormati
+      // pendingPause dari guard reload — jangan menimpa pause itu.
+      if (!(await runWrite(tabId, index))) return;
 
       // ------------------------- navigate -------------------------
       if (step.type === "navigate") {
@@ -375,44 +554,80 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
 
       // ----------------------- step di-halaman ----------------------
       // Jeda dari step sebelumnya (clamp 0..2000) — bagian dari format step.
+      // BISA diinterupsi: Pause/Skip/Stop selama jeda efektif dlm ~100 ms.
       var delay = Math.min(2000, Math.max(0, step.delayMs || 0));
-      if (delay > 0) await T.sleep(delay);
+      if (delay > 0 && !(await interruptibleWait(delay, tabId, index))) {
+        // State berubah saat tidur (pause/stop/skip) — checkpoint sudah
+        // membersihkan flags dan meluncurkan driver baru bila SKIP. Keluar.
+        return;
+      }
 
       // Re-check SETELAH tidur: Pause/Skip bisa terjadi selama driver
       // menunggu delayMs — tanpa ini, step yang di-skip tetap tereksekusi.
-      sLive = await T.getSession();
-      if (!sLive.replay || sLive.replay.status !== "running" || sLive.replay.tabId !== tabId) {
-        replayDriverActive = false;
-        replayDriverIndex = -1;
-        return;
-      }
-      if ((sLive.replay.index || 0) !== index) {
-        replayDriverActive = false;
-        replayDriverIndex = -1;
-        bg.runReplayFrom(tabId).catch(function (e) {
-          bg.failReplay("Replay terputus: " + (e && e.message ? e.message : e));
-        });
-        return;
+      // (Satu-satunya checkpoint saat delay = 0.)
+      if ((await driverCheckpoint(tabId, index)) !== "ok") return;
+
+      // Tandai step IN FLIGHT: bila tab mati di tengah eksekusi (crash, reload
+      // manual), PAGE_READY dokumen baru melihat index === startedIndex dan
+      // mem-parkir replay di paused alih-alih mengulang aksi di halaman yang
+      // sudah di-reset (guard reload — lihat handler PAGE_READY).
+      await bg.setReplayState({ startedIndex: index });
+
+      var result = null;
+      var attempt = 0;
+      while (true) {
+        try {
+          result = await api.tabs.sendMessage(tabId, {
+            type: "TESTERIA_REPLAY_RUN",
+            step: step,
+            stepNumber: index + 1,
+            total: steps.length
+          });
+          break;
+        } catch (e) {
+          // Content script belum hidup (document sedang berputar) — beri waktu
+          // sebentar lalu coba lagi (maks 12× ≈ 3 dtk) sebelum gagal. Dulu
+          // error ini langsung mematikan replay padahal halaman sedang loading.
+          attempt++;
+          if (attempt > 12) {
+            await bg.failReplay(
+              bg.describeStep(step, index) +
+                ": content script tidak bisa dihubungi (" +
+                (e && e.message ? e.message : "no receiver") +
+                ").",
+              index
+            );
+            return;
+          }
+          await T.sleep(250);
+          // Stop/pause/skip saat menunggu content script hidup: checkpoint,
+          // jangan terus me-retry step yang mungkin sudah tidak diinginkan.
+          if ((await driverCheckpoint(tabId, index)) !== "ok") return;
+        }
       }
 
-      var result;
-      try {
-        result = await api.tabs.sendMessage(tabId, {
-          type: "TESTERIA_REPLAY_RUN",
-          step: step,
-          stepNumber: index + 1,
-          total: steps.length
-        });
-      } catch (e) {
-        // Content script belum ada (navigasi baru selesai, atau halaman restriktif).
-        await bg.failReplay(
-          bg.describeStep(step, index) +
-            ": content script tidak bisa dihubungi (" +
-            (e && e.message ? e.message : "no receiver") +
-            ").",
-          index
-        );
+      // Stop di tengah eksekusi step TIDAK boleh dilanjutkan: memajukan index
+      // berarti menghidupkan kembali replay yang sudah di-stop user (dulu
+      // setReplayState menciptakan ulang objek replay dari nol). Pause di
+      // tengah eksekusi TETAP mencatat index — efek step sudah terjadi di
+      // halaman, resume tidak boleh mengulangnya. Skip saat eksekusi juga
+      // diterima: index digeser ke step berikutnya, dan checkpoint awal
+      // iterasi berikutnya yang menyeraahkan eksekusi ke driver baru.
+      var sAfter = await T.getSession();
+      if (
+        !sAfter.replay ||
+        sAfter.replay.tabId !== tabId ||
+        ["running", "paused"].indexOf(sAfter.replay.status) === -1
+      ) {
+        replayDriverActive = false;
+        replayDriverIndex = -1;
         return;
+      }
+      if ((sAfter.replay.index || 0) !== index) {
+        // Index digeser saat step dieksekusi (SKIP saat running) — sinkronkan
+        // ke index terbaru; iterasi berikutnya langsung mengeksekusi step yang
+        // diminta user (checkpoint awal iterasi tetap memvalidasi).
+        index = sAfter.replay.index || 0;
       }
 
       if (!result || !result.ok) {
@@ -421,16 +636,19 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
         return;
       }
 
-      if (result.needNavigate && step.type === "key" && (step.value === "Enter")) {
-        // Enter memicu navigasi form native yang tidak tertangkap sebagai step.
-        // Beri kesempatan navigasi berjalan; kelanjutan via PAGE_READY.
-        await bg.setReplayState({ index: index + 1 });
+      if (result.waitPassword) {
+        // Password (masked): prompt tampil di halaman; JANGAN biarkan channel
+        // pesan terbuka menunggu user — content script sudah menjawab dan
+        // hasilnya datang belakangan lewat message TESTERIA_STEP_DONE
+        // (tahan terhadap SW reload). Index TIDAK dimajukan.
+        await bg.setReplayState({ status: "waiting-password", error: null });
         replayDriverActive = false;
+        replayDriverIndex = -1;
         return;
       }
 
       index += skipNext ? 2 : 1;
-      await bg.setReplayState({ index: index });
+      await bg.setReplayState({ index: index, startedIndex: null });
     }
 
     // Selesai semua step.
@@ -446,7 +664,10 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
     await bg.setReplayState({
       status: "failed",
       error: String(message || "unknown"),
-      failedStep: typeof stepIndex === "number" ? stepIndex : null
+      failedStep: typeof stepIndex === "number" ? stepIndex : null,
+      // Step yang GAGAL eksplisit tidak sempat mengeksekusi aksinya —
+      // startedIndex dibersihkan agar retry/lanjut boleh mengulangnya.
+      startedIndex: null
     });
   };
 
@@ -512,16 +733,58 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
                 api.tabs
                   .sendMessage(sTabId, { type: "TESTERIA_REC_STATE", recording: true })
                   .catch(function () {});
+                // Patch MAIN world per dokumen baru (guard idempoten di dalam
+                // file membuat re-inject aman).
+                api.scripting
+                  .executeScript({
+                    target: { tabId: sTabId, allFrames: false },
+                    world: "MAIN",
+                    files: ["content/spa-main.js"]
+                  })
+                  .catch(function () {});
               }
             } else if (
               session.replay &&
-              session.replay.status === "running" &&
+              ["running", "loading", "waiting-password", "paused"].indexOf(session.replay.status) !== -1 &&
               session.replay.tabId === sTabId
             ) {
               // Halaman replay selesai load → lanjutkan eksekusi step.
-              bg.runReplayFrom(sTabId).catch(function (e) {
-                bg.failReplay("Replay terputus: " + (e && e.message ? e.message : e));
-              });
+              // Status tidak dinaikkan ke "running" di sini: bila replay sedang
+              // waiting-password/paused, tabId match saja yang kita perlukan —
+              // PAGE_READY tab yang sama (mis. reload manual) tidak boleh
+              // menimpa status. runReplayFrom sendiri yang me-cek status.
+              var rp = session.replay;
+              var token = typeof msg.docToken === "string" ? msg.docToken : null;
+              var rpChanged = false;
+              if (token && token !== rp.docToken) {
+                // Dokumen BARU di tab replay. Bila step sebelumnya sempat
+                // DIKIRIM tapi tidak pernah dilaporkan selesai (index ===
+                // startedIndex — signature mati di tengah step) DAN URL barunya
+                // SAMA dengan dokumen sebelumnya (reload sungguhan, bukan
+                // redirect), jangan lanjut buta: halaman sudah di-reset,
+                // mengulang klik bisa double-submit. Parkir di paused — user
+                // yang memutuskan (Lanjutkan / Skip). URL BERBEDA (redirect
+                // antar halaman) tetap dilanjutkan otomatis: step itu belum
+                // sempat jalan di dokumen lama (dulu: rescue re-send).
+                var midStep =
+                  typeof rp.startedIndex === "number" &&
+                  (rp.index || 0) === rp.startedIndex &&
+                  ["running", "loading", "waiting-password"].indexOf(rp.status) !== -1;
+                var sameDoc =
+                  typeof rp.docUrl === "string" && rp.docUrl === pageUrl;
+                rp.docToken = token;
+                rp.docUrl = pageUrl;
+                if (midStep && sameDoc) {
+                  rp.status = "paused";
+                  rp.pendingPause = true; // STICKY: driver (re-send retry!) tidak boleh menimpa
+                  rp.notice =
+                    "Halaman dimuat ulang di tengah step " + (rp.startedIndex + 1) +
+                    " — step mungkin sudah sempat jalan. Lanjutkan untuk mengulang step ini, atau Skip untuk melewatinya.";
+                }
+                rpChanged = true;
+              }
+              if (rpChanged) await T.setSession(session);
+              bg.resumeDriver(sTabId);
               // Tidak sendResponse — driver berjalan async.
             }
             sendResponse({ ok: true });
@@ -619,28 +882,33 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
 
           case "TESTERIA_REPLAY_RESUME": {
             var rs = await T.getSession();
-            if (!rs.replay || rs.replay.status !== "paused" || !rs.replay.tabId) {
+            if (!rs.replay || ["paused", "waiting-password"].indexOf(rs.replay.status) === -1 || !rs.replay.tabId) {
               sendResponse({ ok: false, error: "no-paused-replay" });
               return;
             }
-            await bg.setReplayState({ status: "running" });
+            await bg.setReplayState({ status: "running", notice: null, pendingPause: null });
             // Bila driver lama masih hidup (baru akan keluar via liveness
             // check), biarkan dia sendiri melanjutkan — hindari driver ganda.
             if (!bg.replayDriverBusy()) {
-              bg.runReplayFrom(rs.replay.tabId).catch(function (e) {
-                bg.failReplay("Replay terputus: " + (e && e.message ? e.message : e));
-              });
+              bg.resumeDriver(rs.replay.tabId);
             }
             sendResponse({ ok: true });
             return;
           }
 
           case "TESTERIA_REPLAY_SKIP": {
-            // Lewati step yang sedang dijeda (mis. user sudah mengisi input
-            // secara manual dan tidak ingin step input menimpanya).
+            // Lewati step yang sedang dijeda, menunggu password, ATAU gagal
+            // (panel failed menampilkan tombol Skip — kalau status "failed"
+            // ditolak di sini, tombolnya jadi no-op diam-diam; ditemukan saat
+            // playtest: user klik Skip di panel gagal dan tidak terjadi apa-apa).
             var ks = await T.getSession();
-            if (!ks.replay || ks.replay.status !== "paused" || !ks.replay.tabId) {
-              sendResponse({ ok: false, error: "no-paused-replay" });
+            // "running" ikut diterima: dulu tombol Skip tampil di panel saat
+            // replay berjalan tapi handler menolaknya → no-op diam-diam.
+            // Cukup geser index — driver yang sedang tidur / mengeksekusi
+            // melihatnya lewat checkpoint dan menyerahkan eksekusi ke driver
+            // baru dari index terbaru.
+            if (!ks.replay || ["running", "paused", "waiting-password", "failed"].indexOf(ks.replay.status) === -1 || !ks.replay.tabId) {
+              sendResponse({ ok: false, error: "no-skippable-replay" });
               return;
             }
             var total = ks.replay.total || 0;
@@ -648,13 +916,11 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
             if (nextIdx >= total) {
               replayDriverActive = false;
               replayDriverIndex = -1;
-              await bg.setReplayState({ index: total, status: "done", error: null });
+              await bg.setReplayState({ index: total, status: "done", error: null, startedIndex: null, notice: null });
             } else {
-              await bg.setReplayState({ index: nextIdx, status: "running" });
+              await bg.setReplayState({ index: nextIdx, status: "running", startedIndex: null, notice: null, pendingPause: null });
               if (!bg.replayDriverBusy()) {
-                bg.runReplayFrom(ks.replay.tabId).catch(function (e) {
-                  bg.failReplay("Replay terputus: " + (e && e.message ? e.message : e));
-                });
+                bg.resumeDriver(ks.replay.tabId);
               }
             }
             sendResponse({ ok: true });
@@ -669,15 +935,96 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
               return;
             }
             await bg.setReplayState({ status: "running", error: null });
-            bg.runReplayFrom(sender.tab.id).catch(function (e) {
-              bg.failReplay("Replay terputus: " + (e && e.message ? e.message : e));
-            });
+            bg.resumeDriver(sender.tab.id);
             sendResponse({ ok: true });
             return;
           }
 
           case "TESTERIA_STOP_REPLAY": {
             sendResponse(await bg.stopReplay());
+            return;
+          }
+
+          case "TESTERIA_STEP_DONE": {
+            // Hasil eksekusi step password (masked): content script menyelesaikan
+            // prompt di halaman lalu melapor. Tahan terhadap SW reload — tidak
+            // ada channel pesan yang ditahan terbuka menunggu user.
+            var sd = await T.getSession();
+            var stOk =
+              sd.replay &&
+              ["waiting-password", "running", "loading"].indexOf(sd.replay.status) !== -1;
+            var idxOk =
+              typeof msg.stepIndex !== "number" || msg.stepIndex === (sd.replay && sd.replay.index);
+            if (sd.replay && stOk && idxOk && sender.tab && sd.replay.tabId === sender.tab.id) {
+              await bg.setReplayState({ status: "running" });
+              if (!msg.ok) {
+                await bg.failReplay(
+                  bg.describeStep(
+                    { type: "input", selector: { css: "(password)" } },
+                    typeof msg.stepIndex === "number" ? msg.stepIndex : (sd.replay.index || 0)
+                  ) + ": " + (msg.error || "prompt password ditutup") + ".",
+                  typeof msg.stepIndex === "number" ? msg.stepIndex : sd.replay.index || 0
+                );
+              } else {
+                // Lanjutkan: step password SELESAI → majukan index (dulu lupa,
+                // driver resume di index sama → prompt muncul lagi tanpa henti).
+                await bg.setReplayState({ index: (sd.replay.index || 0) + 1, status: "running", startedIndex: null, notice: null });
+                if (!bg.replayDriverBusy()) {
+                  bg.resumeDriver(sender.tab.id);
+                }
+              }
+            }
+            sendResponse({ ok: true });
+            return;
+          }
+
+          case "TESTERIA_REPLAY_JUMP_TO": {
+            // Mulai ulang dari step terpilih di daftar task (1-based).
+            var jt = await T.getSession();
+            if (!jt.replay || !jt.replay.tabId || ["running", "paused", "waiting-password", "loading", "failed"].indexOf(jt.replay.status) === -1) {
+              sendResponse({ ok: false, error: "no-replay" });
+              return;
+            }
+            var idx = typeof msg.step === "number" ? msg.step - 1 : -1;
+            var total = jt.replay.total || 0;
+            if (idx < 0 || idx >= total) {
+              sendResponse({ ok: false, error: "step-out-of-range" });
+              return;
+            }
+            // Bila tab replay sudah tertutup, buka lagi dari startUrl recording.
+            var rec2 = null;
+            var recs2 = await T.getRecordings();
+            for (var ri = 0; ri < recs2.length; ri++) {
+              if (recs2[ri] && recs2[ri].id === jt.replay.recordingId) rec2 = recs2[ri];
+            }
+            var tabOk = false;
+            try {
+              await api.tabs.get(jt.replay.tabId);
+              tabOk = true;
+            } catch (e) {
+              tabOk = false;
+            }
+            if (!tabOk && rec2 && rec2.startUrl) {
+              var t2 = await api.tabs.create({ url: rec2.startUrl, active: true });
+              await bg.setReplayState({
+                index: idx,
+                status: "loading",
+                error: null,
+                failedStep: null,
+                startedIndex: null,
+                notice: null,
+                docToken: null,
+                docUrl: null,
+                tabId: t2.id
+              });
+              sendResponse({ ok: true });
+              return;
+            }
+            await bg.setReplayState({ index: idx, status: "running", error: null, failedStep: null, startedIndex: null, notice: null });
+            if (!bg.replayDriverBusy()) {
+              bg.resumeDriver(jt.replay.tabId);
+            }
+            sendResponse({ ok: true });
             return;
           }
 
