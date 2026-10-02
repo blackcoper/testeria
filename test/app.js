@@ -192,6 +192,158 @@
       "})()</script>"
   );
 
+  // ---- Form kondisional (repro: field yang muncul/hilang dari pilihan lain) ----
+  // Tipe A → #userWrap DIBUANG dari DOM (seperti React conditional render).
+  // Ada checkbox #agree di form yang sama: selector path yang bergeser setelah
+  // field kondisional hilang pernah membuat replay mencentang checkbox ini
+  // padahal user tidak pernah mengkliknya (bug "checkbox hantu").
+  const CONDITIONAL = page(
+    "Form kondisional",
+    header() +
+      "<main><h1>Form kondisional</h1>" +
+      "<form id='cform'>" +
+      "<label for='ctype'>Tipe</label>" +
+      "<select id='ctype' name='ctype'>" +
+      "<option value=''>— pilih —</option><option value='a'>Tipe A</option><option value='b'>Tipe B</option>" +
+      "</select>" +
+      "<div id='userWrap'><label for='user'>User</label>" +
+      "<select id='user' name='user'><option value='u1'>U1</option><option value='u2'>U2</option></select></div>" +
+      "<label for='title' id='titleLabel'>Judul</label>" +
+      "<input id='title' name='title' placeholder='Judul'>" +
+      "<div class='row'><input type='checkbox' id='agree' name='agree' style='width:auto'>" +
+      "<label for='agree' style='margin:0'>Setuju</label></div>" +
+      "<button type='button' id='save'>Simpan</button>" +
+      "<p id='out'></p>" +
+      "</form></main>" +
+      "<script>(function(){" +
+      "var form=document.getElementById('cform');" +
+      "var t=document.getElementById('ctype');" +
+      "var titleLabel=document.getElementById('titleLabel');" +
+      "function makeUser(){var d=document.createElement('div');d.id='userWrap';" +
+      "d.innerHTML=\"<label for='user'>User</label><select id='user' name='user'><option value='u1'>U1</option><option value='u2'>U2</option></select>\";return d;}" +
+      "function sync(){var cur=document.getElementById('userWrap');" +
+      "if(t.value==='b'){if(!cur)form.insertBefore(makeUser(),titleLabel);}" +
+      "else if(cur){cur.remove();}}" +
+      "t.addEventListener('change',sync);sync();" +
+      "document.getElementById('save').addEventListener('click',function(){" +
+      "document.getElementById('out').textContent='saved';});" +
+      "})()</script>"
+  );
+
+  // ---- Halaman "swap": elemen target DIGANTI 150 ms setelah #first diklik ----
+  // Mereproduksi node yang lepas di tengah animasi kursor (step kedua harus
+  // menemukan node baru, bukan menembak node mati).
+  const SWAP = page(
+    "Swap probe",
+    header() +
+      "<main><h1>Swap probe</h1>" +
+      "<p id='swap-state'>old</p>" +
+      "<div style='height:420px'></div>" +
+      "<button id='first'>first</button>" +
+      "<div style='height:520px'></div>" +
+      "<button id='swap-target'>target</button>" +
+      "</main>" +
+      "<script>(function(){" +
+      "function wire(btn){btn.addEventListener('click',function(){btn.setAttribute('data-clicked','1');buttonText(btn);});}" +
+      "function buttonText(btn){btn.textContent='clicked';}" +
+      "wire(document.getElementById('first'));" +
+      "wire(document.getElementById('swap-target'));" +
+      "document.getElementById('first').addEventListener('click',function(){" +
+      "setTimeout(function(){" +
+      "var old=document.getElementById('swap-target');if(!old)return;" +
+      // Catatan: clone MEMBAWA state (data-clicked) apa adanya — seperti app
+      // nyata yang menyimpan state di luar DOM. Klik ke node lama SEBELUM swap
+      // tetap terhitung; klik ke node yang sudah mati (bug lama) tetap tidak
+      // menghasilkan apa-apa.
+      "var n=old.cloneNode(true);if(!n.getAttribute('data-clicked'))n.textContent='target (baru)';" +
+      "old.parentNode.replaceChild(n,old);wire(n);" +
+      "document.getElementById('swap-state').textContent='swapped';" +
+      "},150);});" +
+      "})()</script>"
+  );
+
+  // ---- Flow halaman PENUH (submit form → dokumen baru) ----
+  // Dipakai menguji penanda `pageload` tanpa URL: step setelah penanda harus
+  // jalan di dokumen baru.
+  const FLOW = page(
+    "Flow — form",
+    header() +
+      "<main><h1>Flow form</h1>" +
+      "<form action='/flow-done' method='GET'>" +
+      "<label for='fname'>Nama</label><input id='fname' name='fname' autocomplete='off'>" +
+      "<button type='submit' id='fgo'>Lanjut</button>" +
+      "</form></main>"
+  );
+
+  const FLOW_DONE = page(
+    "Flow — selesai",
+    header() +
+      "<main><h1>Flow selesai</h1><p id='fdone'>Sampai di halaman kedua.</p>" +
+      "<button id='done-btn'>Tandai selesai</button></main>" +
+      "<script>document.getElementById('done-btn').addEventListener('click',function(){this.textContent='done ✓';});</script>"
+  );
+
+  // ---- Work order dengan dropdown PORTAL (ala react-select / Radix) ----
+  // Mereproduksi REKAMAN NYATA user: tombol combobox + daftar opsi di dalam
+  // portal yang di-append ke <body>, opsinya <div> polos tanpa role/id/
+  // atribut apa pun. Rekaman seperti itu menghasilkan step click dengan
+  // selector LUAS ("body div") dan satu-satunya pembeda = `name` (teks opsi).
+  // Ada decoy div visible di awal dokumen: replayer versi lama (skor "div
+  // visible pertama") mengklik decoy ini dan melaporkan step SUKSES, sehingga
+  // dropdown memilih opsi salah dan seluruh step berikutnya meleset.
+  const PORTAL = page(
+    "Work order",
+    header() +
+      "<main><h1>Work order</h1>" +
+      "<div id='decoy'>Panel informasi</div>" +
+      "<label for='cust'>Name</label>" +
+      "<div id='cust-trigger' class='ctrl'>Select...</div>" +
+      "<label for='status'>Status</label>" +
+      "<div id='status-trigger' class='ctrl'>New</div>" +
+      "<p id='picked'>-</p><p id='statusv'>-</p><p id='saved'>-</p>" +
+      "<button id='save'>Save</button>" +
+      "<p id='late'></p>" +
+      "</main>" +
+      "<script>(function(){" +
+      "window.__clickLog=[];" +
+      "document.addEventListener('click',function(e){var t=e.target;" +
+      "window.__clickLog.push(t.id||t.className||String(t.textContent||'').slice(0,30));},true);" +
+      "var CUSTOMERS=['gofar customer +628923567912 | -','customer disp +628923232323 | -'," +
+      "'PUTU ARYA DINATA +628123949038 | -','IBU SUSI +628551154166 | -','BP AGUS +628156870347 | +628156870347'];" +
+      "var STATUSES=['New','In Progress','Completed','Cancelled'];" +
+      "function closeMenu(){var p=document.getElementById('portal');if(p)p.remove();}" +
+      "function openMenu(list,onPick){" +
+      "closeMenu();" +
+      "var wrap=document.createElement('div');wrap.id='portal';" +
+      "var box=document.createElement('div');box.className='menu';" +
+      "for(var i=0;i<list.length;i++){(function(txt){" +
+      "var d=document.createElement('div');d.className='opt';d.textContent=txt;" + // <div> polos: tanpa role/id/atribut
+      "d.addEventListener('click',function(){closeMenu();onPick(txt);});" +
+      "box.appendChild(d);})(list[i]);}" +
+      "wrap.appendChild(box);document.body.appendChild(wrap);}" +
+      "document.getElementById('cust-trigger').addEventListener('click',function(){" +
+      "openMenu(CUSTOMERS,function(txt){document.getElementById('picked').textContent=txt;});});" +
+      "document.getElementById('status-trigger').addEventListener('click',function(){" +
+      "openMenu(STATUSES,function(txt){document.getElementById('statusv').textContent=txt;" +
+      "document.getElementById('status-trigger').textContent=txt;});});" +
+      "document.getElementById('save').addEventListener('click',function(){" +
+      "document.getElementById('saved').textContent='saved';});" +
+      "})()</script>"
+  );
+
+  // ---- Tombol yang muncul TERLAMBAT (uji Stop saat step masih polling) ----
+  // Jeda dibuat panjang (4 dtk) supaya uji Stop deterministik: pada saat Stop
+  // diklik tombol BELUM ada, dan tanpa abort step akan mengkliknya saat muncul.
+  const DELAYED = page(
+    "Delayed button",
+    header() +
+      "<main><h1>Delayed button</h1><p id='wait'>menunggu…</p></main>" +
+      "<script>setTimeout(function(){var b=document.createElement('button');" +
+      "b.id='late';b.textContent='Late action';" +
+      "b.addEventListener('click',function(){b.setAttribute('data-clicked','1');});" +
+      "document.querySelector('main').appendChild(b);},4000);</script>"
+  );
+
   function handlerFor(url) {
     // SPA shell untuk semua route client-side (real SPAs serve the shell on
     // deep links — tanpa ini replay yang navigate langsung ke /dashboard 404).
@@ -201,6 +353,12 @@
     if (url.pathname === "/redirect") return REDIRECT;
     if (url.pathname === "/slow") return SLOW;
     if (url.pathname === "/reload-probe") return RELOAD_NUDGE;
+    if (url.pathname === "/conditional") return CONDITIONAL;
+    if (url.pathname === "/swap") return SWAP;
+    if (url.pathname === "/flow") return FLOW;
+    if (url.pathname === "/flow-done") return FLOW_DONE;
+    if (url.pathname === "/portal") return PORTAL;
+    if (url.pathname === "/delayed") return DELAYED;
     return page("404", "<main><h1>404</h1><a href='/'>home</a></main>");
   }
 

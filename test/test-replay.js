@@ -1,7 +1,7 @@
 /*
  * E2E 2: replay a seeded login flow incl. password prompt (masked), select,
- * SPA navigate, and a click on a delayed-render element. Asserts final page
- * state + replay status "done" in session storage.
+ * SPA route change (dari KLIK — bukan step URL), dan klik elemen
+ * delayed-render. Asserts final page state + replay status "done" di storage.
  */
 const assert = require("assert");
 const { launch, getSession, bgEval, extId } = require("./harness");
@@ -20,7 +20,9 @@ function seedRecording() {
       { type: "input", selector: { css: "#password", text: null, xpath: "", alt: [] }, value: "<masked>", url: null, delayMs: 300, ts: 300, masked: true },
       { type: "select", selector: { css: "#project", text: null, xpath: "", alt: [] }, value: "beta", url: null, delayMs: 200, ts: 500 },
       { type: "click", selector: { css: "#login-btn", text: null, xpath: "", alt: [] }, value: null, url: null, delayMs: 200, ts: 700 },
-      { type: "navigate", selector: null, value: null, url: BASE + "/dashboard", delayMs: 0, ts: 4000 },
+      // Tidak ada step navigate: route /dashboard datang dari FE setelah klik
+      // login (SPA pushState). Klik #refresh-btn menunggu render 2,5 dtk
+      // lewat polling elemen replayer — bukan lewat step URL.
       { type: "click", selector: { css: "#refresh-btn", text: null, xpath: "", alt: [] }, value: null, url: null, delayMs: 0, ts: 4200 }
     ]
   };
@@ -78,7 +80,7 @@ async function main() {
     const welcome = await replayPage.textContent("#welcome").catch(() => null);
     assert.ok(welcome && welcome.includes("beta"), "project beta applied via select replay, got: " + welcome);
 
-    console.log("PASS: replay done end-to-end (password prompt, select, navigate, delayed-render click)");
+    console.log("PASS: replay done end-to-end (password prompt, select, SPA route via klik, delayed-render click)");
   } finally {
     await context.close().catch(() => {});
     server.close();

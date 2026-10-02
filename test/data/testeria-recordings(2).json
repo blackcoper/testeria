@@ -1,0 +1,1104 @@
+{
+  "testeria": 1,
+  "exportedAt": 1790899850322,
+  "recordings": [
+    {
+      "id": "muq78b40-j7aejixg",
+      "name": "wo->send so request",
+      "createdAt": 1790899345728,
+      "startUrl": "http://192.168.1.5:3000/partner/work-order/82434",
+      "group": null,
+      "steps": [
+        {
+          "type": "click",
+          "selector": {
+            "css": "body td:nth-of-type(4) > button",
+            "text": null,
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/div[2]/div[9]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/table[1]/tbody[1]/tr[1]/td[4]/button[1]",
+            "alt": [
+              {
+                "css": "body tr > td:nth-of-type(4) > button",
+                "text": null
+              },
+              {
+                "css": "body tbody > tr > td:nth-of-type(4) > button",
+                "text": null
+              },
+              {
+                "css": "body table > tbody > tr > td:nth-of-type(4) > button",
+                "text": null
+              },
+              {
+                "css": "body div:nth-of-type(1) > table > tbody > tr > td:nth-of-type(4) > button",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": null,
+          "value": null,
+          "ts": 2742,
+          "delayMs": 0
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Details",
+            "xpath": "/html/body[1]/div[3]/div[1]/div[1]/button[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Details",
+          "value": null,
+          "ts": 3686,
+          "delayMs": 944
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body button:nth-of-type(3) > p",
+            "text": null,
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[2]/div[2]/button[3]/p[1]",
+            "alt": [
+              {
+                "css": "body div:nth-of-type(2) > button:nth-of-type(3) > p",
+                "text": null
+              },
+              {
+                "css": "body div:nth-of-type(2) > div:nth-of-type(2) > button:nth-of-type(3) > p",
+                "text": null
+              },
+              {
+                "css": "body div > div:nth-of-type(2) > div:nth-of-type(2) > button:nth-of-type(3) > p",
+                "text": null
+              },
+              {
+                "css": "body div > div > div:nth-of-type(2) > div:nth-of-type(2) > button:nth-of-type(3) > p",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "P",
+            "inputType": null,
+            "role": null,
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Send SO Request",
+          "value": null,
+          "ts": 6975,
+          "delayMs": 2000
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Progress",
+            "xpath": "/html/body[1]/div[5]/div[2]/div[2]/button[2]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Progress",
+          "value": null,
+          "ts": 9046,
+          "delayMs": 2000
+        }
+      ]
+    },
+    {
+      "id": "muq77e8t-lzmf1alt",
+      "name": "add pr 1 local 3 non-local",
+      "createdAt": 1790899303133,
+      "startUrl": "http://192.168.1.5:3000/partner/work-order/82434",
+      "group": null,
+      "steps": [
+        {
+          "type": "click",
+          "selector": {
+            "css": "body div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > button",
+            "text": null,
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/div[2]/div[1]/div[1]/div[2]/button[1]",
+            "alt": [
+              {
+                "css": "body div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > button",
+                "text": null
+              },
+              {
+                "css": "body div:nth-of-type(3) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > button",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "New",
+          "value": null,
+          "ts": 1011,
+          "delayMs": 0
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body div:nth-of-type(1)",
+            "text": null,
+            "xpath": "/html/body[1]/div[4]/div[1]/div[1]/div[1]/div[1]/div[1]/form[1]/div[1]/div[1]/div[5]/button[1]/div[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "DIV",
+            "inputType": null,
+            "role": null,
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Select...",
+          "value": null,
+          "ts": 2235,
+          "delayMs": 1224
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body div",
+            "text": null,
+            "xpath": "/html/body[1]/div[5]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "DIV",
+            "inputType": null,
+            "role": null,
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "AN5265",
+          "value": null,
+          "ts": 3114,
+          "delayMs": 879
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Search Part",
+            "xpath": "/html/body[1]/div[4]/div[1]/div[1]/div[1]/div[1]/div[1]/form[1]/div[1]/div[2]/button[1]",
+            "alt": [
+              {
+                "css": "body form > div > div:nth-of-type(2) > button",
+                "text": null
+              },
+              {
+                "css": "body div > form > div > div:nth-of-type(2) > button",
+                "text": null
+              },
+              {
+                "css": "body div > div > form > div > div:nth-of-type(2) > button",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Search Part",
+          "value": null,
+          "ts": 3787,
+          "delayMs": 673
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body tr:nth-of-type(1) > td:nth-of-type(1) > button",
+            "text": null,
+            "xpath": "/html/body[1]/div[4]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/table[1]/tbody[1]/tr[1]/td[1]/button[1]",
+            "alt": [
+              {
+                "css": "body tbody > tr:nth-of-type(1) > td:nth-of-type(1) > button",
+                "text": null
+              },
+              {
+                "css": "body table > tbody > tr:nth-of-type(1) > td:nth-of-type(1) > button",
+                "text": null
+              },
+              {
+                "css": "body div > table > tbody > tr:nth-of-type(1) > td:nth-of-type(1) > button",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "checkbox",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": null,
+          "value": null,
+          "ts": 4924,
+          "delayMs": 1137
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body tr:nth-of-type(2) > td:nth-of-type(1) > button",
+            "text": null,
+            "xpath": "/html/body[1]/div[4]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/table[1]/tbody[1]/tr[2]/td[1]/button[1]",
+            "alt": [
+              {
+                "css": "body tbody > tr:nth-of-type(2) > td:nth-of-type(1) > button",
+                "text": null
+              },
+              {
+                "css": "body table > tbody > tr:nth-of-type(2) > td:nth-of-type(1) > button",
+                "text": null
+              },
+              {
+                "css": "body div > table > tbody > tr:nth-of-type(2) > td:nth-of-type(1) > button",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "checkbox",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": null,
+          "value": null,
+          "ts": 5410,
+          "delayMs": 486
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Add Part",
+            "xpath": "/html/body[1]/div[4]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[2]/button[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Add Part",
+          "value": null,
+          "ts": 6172,
+          "delayMs": 762
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body tr:nth-of-type(1) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+            "text": null,
+            "xpath": "/html/body[1]/div[4]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/table[1]/tbody[1]/tr[1]/td[2]/div[1]/button[2]",
+            "alt": [
+              {
+                "css": "body tbody > tr:nth-of-type(1) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+                "text": null
+              },
+              {
+                "css": "body table > tbody > tr:nth-of-type(1) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "+",
+          "value": null,
+          "ts": 7786,
+          "delayMs": 1614
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body tr:nth-of-type(2) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+            "text": null,
+            "xpath": "/html/body[1]/div[4]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/table[1]/tbody[1]/tr[2]/td[2]/div[1]/button[2]",
+            "alt": [
+              {
+                "css": "body tbody > tr:nth-of-type(2) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+                "text": null
+              },
+              {
+                "css": "body table > tbody > tr:nth-of-type(2) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "+",
+          "value": null,
+          "ts": 8196,
+          "delayMs": 410
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body tr:nth-of-type(2) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+            "text": null,
+            "xpath": "/html/body[1]/div[4]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/table[1]/tbody[1]/tr[2]/td[2]/div[1]/button[2]",
+            "alt": [
+              {
+                "css": "body tbody > tr:nth-of-type(2) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+                "text": null
+              },
+              {
+                "css": "body table > tbody > tr:nth-of-type(2) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "+",
+          "value": null,
+          "ts": 8378,
+          "delayMs": 182
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body tr:nth-of-type(2) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+            "text": null,
+            "xpath": "/html/body[1]/div[4]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/table[1]/tbody[1]/tr[2]/td[2]/div[1]/button[2]",
+            "alt": [
+              {
+                "css": "body tbody > tr:nth-of-type(2) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+                "text": null
+              },
+              {
+                "css": "body table > tbody > tr:nth-of-type(2) > td:nth-of-type(2) > div > button:nth-of-type(2)",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "+",
+          "value": null,
+          "ts": 8524,
+          "delayMs": 146
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Request Part & Save",
+            "xpath": "/html/body[1]/div[4]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/div[2]/button[1]",
+            "alt": [
+              {
+                "css": "body div:nth-of-type(3) > div > div:nth-of-type(2) > button",
+                "text": null
+              },
+              {
+                "css": "body div > div:nth-of-type(3) > div > div:nth-of-type(2) > button",
+                "text": null
+              },
+              {
+                "css": "body div:nth-of-type(1) > div > div:nth-of-type(3) > div > div:nth-of-type(2) > button",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Request Part & Save",
+          "value": null,
+          "ts": 9196,
+          "delayMs": 672
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Request Part",
+            "xpath": "/html/body[1]/div[7]/div[2]/div[2]/button[2]",
+            "alt": [
+              {
+                "css": "body div:nth-of-type(2) > div:nth-of-type(2) > button:nth-of-type(2)",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Request Part",
+          "value": null,
+          "ts": 10251,
+          "delayMs": 1055
+        }
+      ]
+    },
+    {
+      "id": "muq76sel-jp6zy0u0",
+      "name": "update wo inprogress",
+      "createdAt": 1790899274829,
+      "startUrl": "http://192.168.1.5:3000/partner/work-order/82434",
+      "group": null,
+      "steps": [
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Edit",
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/div[1]/div[1]/button[1]",
+            "alt": [
+              {
+                "css": "body div:nth-of-type(1) > div:nth-of-type(1) > button",
+                "text": null
+              },
+              {
+                "css": "body div:nth-of-type(3) > div:nth-of-type(1) > div:nth-of-type(1) > button",
+                "text": null
+              },
+              {
+                "css": "body div > div:nth-of-type(3) > div:nth-of-type(1) > div:nth-of-type(1) > button",
+                "text": null
+              },
+              {
+                "css": "body div > div > div:nth-of-type(3) > div:nth-of-type(1) > div:nth-of-type(1) > button",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Edit",
+          "value": null,
+          "ts": 623,
+          "delayMs": 0
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body div:nth-of-type(1)",
+            "text": null,
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/form[1]/div[1]/div[2]/div[5]/button[1]/div[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "DIV",
+            "inputType": null,
+            "role": null,
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "New",
+          "value": null,
+          "ts": 2252,
+          "delayMs": 1629
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body div",
+            "text": null,
+            "xpath": "/html/body[1]/div[3]/div[1]/div[1]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "DIV",
+            "inputType": null,
+            "role": null,
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "In Progress",
+          "value": null,
+          "ts": 3478,
+          "delayMs": 1226
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "#_r_6q_-form-item",
+            "text": null,
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/form[1]/div[1]/div[2]/div[6]/button[1]",
+            "alt": [
+              {
+                "css": "button",
+                "text": "Assigned to Technician PASS"
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": "_r_6q_-form-item",
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Assigned to Technician PASS",
+          "value": null,
+          "ts": 4796,
+          "delayMs": 1318
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body p",
+            "text": null,
+            "xpath": "/html/body[1]/div[3]/div[1]/div[1]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/p[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "P",
+            "inputType": null,
+            "role": null,
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Repair Started",
+          "value": null,
+          "ts": 6052,
+          "delayMs": 1256
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Save",
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/form[1]/div[11]/button[2]",
+            "alt": [
+              {
+                "css": "body div:nth-of-type(11) > button:nth-of-type(2)",
+                "text": null
+              },
+              {
+                "css": "body form > div:nth-of-type(11) > button:nth-of-type(2)",
+                "text": null
+              },
+              {
+                "css": "body div:nth-of-type(3) > form > div:nth-of-type(11) > button:nth-of-type(2)",
+                "text": null
+              },
+              {
+                "css": "body div > div:nth-of-type(3) > form > div:nth-of-type(11) > button:nth-of-type(2)",
+                "text": null
+              },
+              {
+                "css": "body div > div > div:nth-of-type(3) > form > div:nth-of-type(11) > button:nth-of-type(2)",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Save",
+          "value": null,
+          "ts": 7136,
+          "delayMs": 1084
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Update",
+            "xpath": "/html/body[1]/div[5]/div[2]/div[2]/button[2]",
+            "alt": [
+              {
+                "css": "body div:nth-of-type(2) > div:nth-of-type(2) > button:nth-of-type(2)",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Update",
+          "value": null,
+          "ts": 8252,
+          "delayMs": 1116
+        }
+      ]
+    },
+    {
+      "id": "muq75thj-x2o7nsbs",
+      "name": "create work-order",
+      "createdAt": 1790899229575,
+      "startUrl": "http://192.168.1.5:3000/partner/dashboard",
+      "group": null,
+      "steps": [
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Work Order Management",
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/aside[1]/div[2]/div[1]/div[1]/nav[1]/div[3]/button[1]",
+            "alt": [
+              {
+                "css": "body div:nth-of-type(3) > button",
+                "text": null
+              },
+              {
+                "css": "body nav > div:nth-of-type(3) > button",
+                "text": null
+              },
+              {
+                "css": "body div > nav > div:nth-of-type(3) > button",
+                "text": null
+              },
+              {
+                "css": "body div > div > nav > div:nth-of-type(3) > button",
+                "text": null
+              },
+              {
+                "css": "body div:nth-of-type(2) > div > div > nav > div:nth-of-type(3) > button",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Work Order Management",
+          "value": null,
+          "ts": 2028,
+          "delayMs": 0
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "a",
+            "text": "Work Order Operasional",
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/aside[1]/div[2]/div[1]/div[1]/nav[1]/div[3]/div[1]/div[1]/a[1]",
+            "alt": [
+              {
+                "css": "body div > div > a",
+                "text": null
+              },
+              {
+                "css": "body div:nth-of-type(3) > div > div > a",
+                "text": null
+              },
+              {
+                "css": "body nav > div:nth-of-type(3) > div > div > a",
+                "text": null
+              },
+              {
+                "css": "body div > nav > div:nth-of-type(3) > div > div > a",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "A",
+            "inputType": null,
+            "role": "link",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Work Order Operasional",
+          "value": null,
+          "ts": 2721,
+          "delayMs": 693
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "New",
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[2]/div[1]/div[2]/button[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "New",
+          "value": null,
+          "ts": 4294,
+          "delayMs": 1573
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "#_r_1l_-form-item",
+            "text": null,
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/form[1]/div[1]/div[2]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/button[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": "_r_1l_-form-item",
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Select...",
+          "value": null,
+          "ts": 7899,
+          "delayMs": 2000
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body div",
+            "text": null,
+            "xpath": "/html/body[1]/div[3]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "DIV",
+            "inputType": null,
+            "role": null,
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "gofar customer +628923567912 | -",
+          "value": null,
+          "ts": 8658,
+          "delayMs": 759
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "#_r_2g_-form-item",
+            "text": null,
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/form[1]/div[1]/div[4]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/button[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": "_r_2g_-form-item",
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Select...",
+          "value": null,
+          "ts": 11595,
+          "delayMs": 2000
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body div",
+            "text": null,
+            "xpath": "/html/body[1]/div[3]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "DIV",
+            "inputType": null,
+            "role": null,
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "sn-23123",
+          "value": null,
+          "ts": 12666,
+          "delayMs": 1071
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "#_r_2u_-form-item",
+            "text": null,
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/form[1]/div[1]/div[5]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/button[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": "_r_2u_-form-item",
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Select...",
+          "value": null,
+          "ts": 15948,
+          "delayMs": 2000
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body div",
+            "text": null,
+            "xpath": "/html/body[1]/div[3]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "DIV",
+            "inputType": null,
+            "role": null,
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "1 LED BLINKING",
+          "value": null,
+          "ts": 16546,
+          "delayMs": 598
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "#_r_3s_-form-item",
+            "text": null,
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/form[1]/div[1]/div[6]/div[1]/div[2]/div[1]/div[1]/div[1]/button[1]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": "_r_3s_-form-item",
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Select...",
+          "value": null,
+          "ts": 18556,
+          "delayMs": 2000
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "#radix-_r_51_",
+            "text": null,
+            "xpath": "/html/body[1]/div[3]/div[1]/div[1]/div[2]/div[1]/div[1]",
+            "alt": [
+              {
+                "css": "[role=\"option\"]",
+                "text": "Rachmat - 3908 - ALAM TEHNIK"
+              }
+            ]
+          },
+          "kind": {
+            "tag": "DIV",
+            "inputType": null,
+            "role": "option",
+            "id": "radix-_r_51_",
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "radix r 51",
+          "value": null,
+          "ts": 19506,
+          "delayMs": 950
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "button",
+            "text": "Save",
+            "xpath": "/html/body[1]/div[2]/div[1]/div[1]/main[1]/div[1]/div[1]/div[3]/form[1]/div[1]/div[7]/button[3]",
+            "alt": [
+              {
+                "css": "body button:nth-of-type(3)",
+                "text": null
+              },
+              {
+                "css": "body div:nth-of-type(7) > button:nth-of-type(3)",
+                "text": null
+              },
+              {
+                "css": "body div > div:nth-of-type(7) > button:nth-of-type(3)",
+                "text": null
+              },
+              {
+                "css": "body form > div > div:nth-of-type(7) > button:nth-of-type(3)",
+                "text": null
+              },
+              {
+                "css": "body div:nth-of-type(3) > form > div > div:nth-of-type(7) > button:nth-of-type(3)",
+                "text": null
+              }
+            ]
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Save",
+          "value": null,
+          "ts": 21185,
+          "delayMs": 1679
+        },
+        {
+          "type": "click",
+          "selector": {
+            "css": "body div:nth-of-type(2) > div:nth-of-type(2) > button:nth-of-type(2)",
+            "text": null,
+            "xpath": "/html/body[1]/div[5]/div[2]/div[2]/button[2]",
+            "alt": []
+          },
+          "kind": {
+            "tag": "BUTTON",
+            "inputType": null,
+            "role": "button",
+            "id": null,
+            "name": null,
+            "ariaLabel": null,
+            "placeholder": null
+          },
+          "name": "Save",
+          "value": null,
+          "ts": 22210,
+          "delayMs": 1025
+        }
+      ]
+    }
+  ]
+}

@@ -19,6 +19,7 @@
   var settingsEl = document.getElementById("settings");
   var settingsBtn = document.getElementById("settings-btn");
   var instantEl = document.getElementById("set-instant");
+  var reuseEl = document.getElementById("set-reuse");
   var cardEl = document.getElementById("replay-card");
   var rcStop = document.getElementById("rc-stop");
   var rcTitle = document.getElementById("rc-title");
@@ -33,16 +34,17 @@
   // Settings (settings.replayInstant dsb.)
   // ---------------------------------------------------------------------------
   async function loadSettings() {
-    var res = await api.storage.local.get("settings");
-    var s = (res && res.settings) || {};
+    var s = await T.getSettings();
     instantEl.checked = !!s.replayInstant;
+    reuseEl.checked = s.replayReuseTab !== false;
   }
 
   instantEl.addEventListener("change", async function () {
-    var res = await api.storage.local.get("settings");
-    var s = Object.assign({}, (res && res.settings) || {});
-    s.replayInstant = instantEl.checked;
-    await api.storage.local.set({ settings: s });
+    await T.setSettings({ replayInstant: instantEl.checked });
+  });
+
+  reuseEl.addEventListener("change", async function () {
+    await T.setSettings({ replayReuseTab: reuseEl.checked });
   });
 
   settingsBtn.addEventListener("click", function () {
@@ -102,13 +104,18 @@
     rcBadge.textContent = REPLAY_BADGE[replay.status] || replay.status;
     var total = replay.total || 0;
     var cur = replay.index || 0;
+    // Label step aktif — nama manusiawi dari daftar `labels` (background).
+    var curLabel =
+      Array.isArray(replay.labels) && replay.labels[Math.min(cur, total - 1)]
+        ? " · " + replay.labels[Math.min(cur, total - 1)]
+        : "";
     if (replay.status === "done") {
       rcFill.style.width = "100%";
       rcSub.textContent = total + " step selesai ✓";
     } else {
       rcFill.style.width = total ? Math.round((Math.min(cur, total) / total) * 100) + "%" : "0%";
       rcSub.textContent =
-        "step " + Math.min(cur + 1, total || 1) + "/" + total +
+        "step " + Math.min(cur + 1, total || 1) + "/" + total + curLabel +
         (replay.status === "paused" ? " — halaman bebas diedit, lanjutkan dari panel/popup" : "");
     }
     if (replay.error) {
@@ -562,7 +569,9 @@
       typeof rec.startUrl === "string" && /^https?:/i.test(rec.startUrl) ? rec.startUrl : null;
     if (!Array.isArray(rec.steps) || !rec.steps.length || rec.steps.length > 10000) return null;
 
-    var TYPE_RE = /^(click|input|select|check|key|navigate)$/;
+    // `pageload` = penanda ganti dokumen tanpa URL (navigate ikut diterima
+    // untuk rekaman lama — dimigrasi di bawah). `assert` didukung sejak v0.3.
+    var TYPE_RE = /^(click|input|select|check|key|assert|pageload|navigate)$/;
     var steps = [];
     for (var i = 0; i < rec.steps.length; i++) {
       var s = rec.steps[i];
@@ -584,12 +593,17 @@
         type: s.type,
         selector: s.selector || null,
         value: typeof s.value === "string" ? s.value : null,
-        url: typeof s.url === "string" ? s.url : null,
         delayMs: typeof s.delayMs === "number" ? Math.min(2000, Math.max(0, s.delayMs)) : 0,
         ts: typeof s.ts === "number" ? s.ts : 0
       };
       if (s.masked === true) step.masked = true; // pertahankan penanda password
-      steps.push(step);
+      if (s.dblclick === true) step.dblclick = true;
+      if (s.button === "right") step.button = "right";
+      if (typeof s.name === "string" && s.name.trim()) step.name = s.name.trim().slice(0, 60);
+      if (s.kind && typeof s.kind === "object") step.kind = s.kind;
+      if (typeof s.assertMode === "string") step.assertMode = s.assertMode;
+      // Normalisasi: URL tidak pernah menjadi bagian step.
+      steps.push(T.migrateStep(step));
     }
 
     return {

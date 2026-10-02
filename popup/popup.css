@@ -158,11 +158,23 @@ body {
   background: #fafafa;
 }
 
+.set-head {
+  font: 600 12px/1.4 system-ui, sans-serif;
+  color: #202124;
+  margin-bottom: 8px;
+}
+
 .set-row {
   display: flex;
   gap: 9px;
   align-items: flex-start;
   cursor: pointer;
+}
+
+.set-row + .set-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #ececec;
 }
 
 .set-row input {

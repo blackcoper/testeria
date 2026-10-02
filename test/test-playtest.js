@@ -78,6 +78,14 @@ async function startReplay(context, recording) {
 async function main() {
   const { context, server } = await launch(8899);
   try {
+    // Playtest menguji panel/state, bukan reuse tab: matikan reuse supaya tiap
+    // skenario memulai dari tab replay yang bersih dan deterministik.
+    await bgEval(context, async () => {
+      await browser.storage.local.set({
+        settings: { replayReuseTab: false, replayInstant: false }
+      });
+    });
+
     // ------------------------------------------ 1. Pause → Lanjutkan → done
     {
       const rp = await startReplay(context, rec("pt-1", [
@@ -145,10 +153,13 @@ async function main() {
       });
       await waitFor(context, (s) => s.replay && s.replay.status === "failed", 8000, "failed");
       await panelButton(rp, "Skip").click();
-      const s = await waitFor(context, (s) => s.replay && (s.replay.status === "done" || s.replay.status === "failed"), 30000, "selesai");
+      // Tunggu status AKHIR "done" saja: menerima "failed" di sini membuat
+      // assertion balapan dengan state GAGAL yang belum sempat di-skip
+      // (waitFor langsung cocok dengan state lama → tes gagal acak).
+      const s = await waitFor(context, (s) => s.replay && s.replay.status === "done", 30000, "selesai setelah Skip");
       // Password dilewati → login-btn klik dengan password kosong → app menolak,
       // tapi replay LANJUT sampai done (tidak ada step lagi yang gagal selector-nya).
-      assert.equal(s.replay.status, "done", "skip dari failed lanjut sampai done");
+      assert.equal(s.replay.status, "done", "skip dari failed lanjut sampai done: " + JSON.stringify(s.replay));
       console.log("PASS 3: Skip dari failed → replay berlanjut → done");
       await rp.close();
     }

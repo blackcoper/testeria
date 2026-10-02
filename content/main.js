@@ -160,7 +160,8 @@
 
   // ---------------------------------------------------------------------------
   // PAGE_READY: beri tahu background halaman ini siap.
-  //   - Saat recording: background menambahkan step navigate (URL berubah).
+  //   - Saat recording: ganti dokumen penuh dicatat sebagai penanda TANPA URL
+  //     (`pageload`) — URL/id tidak pernah masuk ke step.
   //   - Saat replay: background melanjutkan eksekusi step berikutnya.
   // ---------------------------------------------------------------------------
   try {
@@ -174,6 +175,21 @@
   // ---------------------------------------------------------------------------
   var lastReplayActivity = 0; // agar pill done/fail hanya tampil di tab replay aktif
 
+  // ---------------------------------------------------------------------------
+  // Abort step in-flight (Stop/Skip/Pause dari panel)
+  // ---------------------------------------------------------------------------
+  // Driver background hanya bisa memeriksa keadaan DI ANTARA step; satu step
+  // yang sedang mencari elemen (polling sampai 5 dtk) tetap berjalan dan bisa
+  // mengklik elemen yang baru muncul SETELAH user menekan Stop. Background
+  // mengirim TESTERIA_REPLAY_ABORT berisi nomor step in-flight, dan replayer
+  // memakai global ini untuk berhenti mencari. Keyed ke nomor step supaya
+  // pesan abort yang telat datang tidak mematikan step berikutnya.
+  var currentStepNumber = null;
+  var abortedStepNumber = null;
+  globalThis.TESTERIA_ABORT_REQUESTED = function () {
+    return currentStepNumber != null && abortedStepNumber === currentStepNumber;
+  };
+
   api.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     if (!msg || typeof msg.type !== "string") return;
 
@@ -182,6 +198,19 @@
         // Dipakai background untuk memutuskan apakah content script perlu
         // di-re-inject (recovery). Jawab tanpa efek samping.
         sendResponse({ ok: true });
+        return;
+      }
+
+      case "TESTERIA_WHOAMI": {
+        // Identitas dokumen: dipakai mode "reuse tab" (tab yang sudah terbuka
+        // tidak mengirim PAGE_READY baru) dan penanda `pageload` (apakah
+        // dokumen benar-benar sudah berganti).
+        sendResponse({
+          ok: true,
+          docToken: DOC_TOKEN,
+          url: String(location.href),
+          readyState: document.readyState
+        });
         return;
       }
 
@@ -203,8 +232,23 @@
         overlay.showSaveModal(msg.steps || [], msg.startUrl || null);
         sendResponse({ ok: true });
         return;
-      }      case "TESTERIA_REPLAY_RUN": {
+      }
+
+      case "TESTERIA_REPLAY_ABORT": {
+        // Stop/Skip/Pause ditekan user saat step ini masih mencari elemen.
+        // Hanya berlaku bila nomor step cocok dengan step yang sedang jalan
+        // (pesan telat untuk step yang sudah selesai diabaikan).
+        if (typeof msg.stepNumber === "number" && msg.stepNumber === currentStepNumber) {
+          abortedStepNumber = msg.stepNumber;
+        }
+        sendResponse({ ok: true });
+        return;
+      }
+
+      case "TESTERIA_REPLAY_RUN": {
         lastReplayActivity = Date.now();
+        currentStepNumber = typeof msg.stepNumber === "number" ? msg.stepNumber : null;
+        abortedStepNumber = null;
         // Mode visual replay: kursor virtual + ambient hanya selama Testeria
         // aktif mengoperasikan halaman (step berjalan).
         if (overlay) {
@@ -300,6 +344,7 @@
       current: replay.status === "done" ? null : replay.index,
       total: replay.total || 0,
       labels: replay.labels || [],
+      hints: replay.hints || [],
       types: replay.types || [],
       error: replay.error,
       failedStep: typeof replay.failedStep === "number" ? replay.failedStep : null,
@@ -386,9 +431,19 @@
       var fresh = Date.now() - lastReplayActivity < 120000;
       if (replay && typeof replay === "object") {
         if (ownReplayDoc(replay) || fresh) renderReplayPanel(replay);
-      } else if (replay == null && fresh) {
-        // Replay di-stop user → matikan visual mode replay.
+      } else if (replay == null) {
+        // Replay di-stop user (session.replay dikosongkan) → matikan visual
+        // mode replay DAN buang panel. Dulu hanya efek visual yang dimatikan,
+        // sehingga panel dengan tombol Ulangi/Skip/Stop tetap terpampang:
+        // user menekan Stop, tidak ada yang berubah, dan terlihat seolah
+        // tombolnya mati.
+        // CATATAN: JANGAN membersihkan currentStepNumber/abortedStepNumber di
+        // sini — Stop justru yang mengirim abort untuk step in-flight; dulu
+        // flag-nya ikut di-reset di sini sehingga abort tidak pernah terpakai
+        // dan step yang sedang polling tetap mengklik elemen setelah Stop.
+        // Keduanya dibersihkan saat REPLAY_RUN berikutnya.
         stopReplayFx();
+        if (typeof ov.hideReplay === "function") ov.hideReplay();
       }
     });
   } catch (e) {}

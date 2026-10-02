@@ -47,6 +47,11 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     var style = document.createElement("style");
     style.textContent = CSS_TEXT;
     root.appendChild(style);
+    // Cermin DOM (host attribute) dari mode kursor — dipakai E2E untuk
+    // memverifikasi instant mode tanpa menyentuh state isolated world.
+    try {
+      host.setAttribute("data-tst-instant", instant ? "1" : "0");
+    } catch (e) {}
     ui.host = host;
     ui.root = root;
     return root;
@@ -284,7 +289,12 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
 
   /** Instant mode (settings.replayInstant) — cache di modul; di-set main.js. */
   var instant = false;
-  overlay.setInstantMode = function (v) { instant = !!v; };
+  overlay.setInstantMode = function (v) {
+    instant = !!v;
+    try {
+      if (ui.host) ui.host.setAttribute("data-tst-instant", instant ? "1" : "0");
+    } catch (e) {}
+  };
   overlay.instantMode = function () { return instant; };
 
   /** Efek ripple di posisi kursor (panggil saat aksi dieksekusi). */
@@ -389,7 +399,12 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     "  background: rgba(124,77,255,.35); color: #e6dcff; }",
     ".tst-step-item.current .tst-step-num { background: #7c4dff; color: #fff; }",
     ".tst-step-item.failed .tst-step-num { background: #f28b82; color: #201a1a; }",
+    ".tst-step-item.page .tst-step-num { background: rgba(41,121,255,.35); color: #dbe8ff; }",
+    ".tst-step-item.page.current .tst-step-num { background: #2979ff; color: #fff; }",
     ".tst-step-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
+    ".tst-step-text { min-width: 0; display: flex; flex-direction: column; gap: 1px; }",
+    ".tst-step-sub { font: 400 9.5px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;",
+    "  color: #8d7fb8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
     ".tst-panel-actions { display: flex; gap: 6px; padding: 8px 12px 12px; border-top: 1px solid rgba(124,77,255,.25); }",
     ".tst-panel-actions button { flex: 1; border: 1px solid #5f6368; background: transparent; color: #efeafe;",
     "  border-radius: 7px; padding: 6px 4px; font: 500 11.5px/1.2 system-ui, sans-serif; cursor: pointer; }",
@@ -420,8 +435,14 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     ".tst-quick-name { font: 500 13px/1.4 system-ui, sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }",
     ".tst-quick-meta { font: 400 10.5px/1.4 system-ui, sans-serif; color: #a99bd1; flex-shrink: 0; }",
     ".tst-quick-empty { padding: 18px 14px; font: 400 12px/1.6 system-ui, sans-serif; color: #a99bd1; }",
-    ".tst-quick-foot { padding: 8px 14px; border-top: 1px solid rgba(124,77,255,.25);",
+    ".tst-quick-set { display: flex; align-items: center; gap: 8px; padding: 8px 14px 0;",
     "  font: 400 10.5px/1.4 system-ui, sans-serif; color: #8d7fb8; }",
+    ".tst-quick-toggle { border: 1px solid rgba(124,77,255,.5); background: rgba(124,77,255,.16);",
+    "  color: #e6dcff; border-radius: 999px; padding: 5px 10px; cursor: pointer;",
+    "  font: 500 11px/1.2 system-ui, sans-serif; }",
+    ".tst-quick-toggle:hover { background: rgba(124,77,255,.3); }",
+    ".tst-quick-foot { padding: 8px 14px; border-top: 1px solid rgba(124,77,255,.25);",
+    "  margin-top: 8px; font: 400 10.5px/1.4 system-ui, sans-serif; color: #8d7fb8; }",
     // ---- Panel dikecilkan: pill status klik-untuk-buka ----
     ".tst-minipill { position: fixed; bottom: 14px; right: 14px; pointer-events: auto;",
     "  background: rgba(18,18,26,.96); color: #efeafe; border: 1px solid rgba(124,77,255,.45);",
@@ -572,6 +593,13 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
     return []; // done
   }
 
+  /** Kelas tambahan per jenis step (badge jenis di daftar). */
+  function stepClass(type) {
+    if (type === "assert") return " assert";
+    if (type === "pageload" || type === "navigate") return " page";
+    return "";
+  }
+
   /** Teks pill status saat panel dikecilkan (×). */
   function pillTextFor(o) {
     var n = (o.current || 0) + 1;
@@ -662,10 +690,15 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
         for (var i = 0; i < opts.labels.length; i++) {
           (function (idx) {
             var b = el("button", {
-              class: "tst-step-item" + (opts.types && opts.types[idx] === "assert" ? " assert" : "")
+              class: "tst-step-item" + stepClass(opts.types && opts.types[idx])
             });
             b.appendChild(el("span", { class: "tst-step-num" }, String(idx + 1)));
-            b.appendChild(el("span", { class: "tst-step-label" }, opts.labels[idx] || "step " + (idx + 1)));
+            var text = el("span", { class: "tst-step-text" });
+            text.appendChild(el("span", { class: "tst-step-label" }, opts.labels[idx] || "step " + (idx + 1)));
+            var hint = (opts.hints && opts.hints[idx]) || "";
+            if (hint) text.appendChild(el("span", { class: "tst-step-sub" }, hint));
+            b.appendChild(text);
+            b.title = (opts.labels[idx] || "") + (hint ? "\n" + hint : "");
             b.addEventListener("click", function () {
               if (typeof panelHandlers.onJump === "function") panelHandlers.onJump(idx + 1); // 1-based
             });
@@ -710,12 +743,17 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
 
     // Kelas step: current / failed / done — cukup swap className, DOM tetap.
     for (var k = 0; k < d.items.length; k++) {
-      var cls = "tst-step-item";
-      if (opts.types && opts.types[k] === "assert") cls += " assert";
+      var cls = "tst-step-item" + stepClass(opts.types && opts.types[k]);
       if (opts.current === k) cls += " current";
       else if (opts.failedStep === k) cls += " failed";
       else if (opts.current != null && k < opts.current) cls += " done";
       d.items[k].className = cls;
+      // Label bisa ter-upgrade saat step dieksekusi (rekaman lama tanpa nama:
+      // background mengisi nama manusiawi dari elemen hidup) — update in-place.
+      if (opts.labels && typeof opts.labels[k] === "string") {
+        var lbl = d.items[k].querySelector(".tst-step-label");
+        if (lbl && lbl.textContent !== opts.labels[k]) lbl.textContent = opts.labels[k];
+      }
     }
     var mark = d.listEl.querySelector(".current, .failed");
     if (mark && mark.scrollIntoView) {
@@ -747,6 +785,7 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
 
   overlay.updateReplayPanel = function (opts) {
     opts.labels = opts.labels || (panelOpts && panelOpts.labels);
+    opts.hints = opts.hints || (panelOpts && panelOpts.hints);
     overlay.showReplayPanel(opts);
   };
 
@@ -852,6 +891,37 @@ var overlay = (globalThis.TESTERIA_OVERLAY = globalThis.TESTERIA_OVERLAY || {});
       });
     }
     card.appendChild(list);
+
+    // Setelan cepat di quick menu: mode kursor (halus ⇄ instan). Ditulis
+    // langsung ke storage — main.js menyinkronkan ke overlay lewat
+    // storage.onChanged, jadi efeknya LIVE tanpa buka popup.
+    var setRow = el("div", { class: "tst-quick-set" });
+    var setBtn = el("button", { class: "tst-quick-toggle", type: "button" }, "Kursor: …");
+    setRow.appendChild(setBtn);
+    setRow.appendChild(el("span", { class: "tst-quick-sethint" }, "bisa juga di ⚙ Setelan popup"));
+    card.appendChild(setRow);
+    function paintSet(s) {
+      setBtn.textContent =
+        "Kursor: " + (s && s.replayInstant ? "instan (tanpa animasi)" : "halus (animasi)");
+    }
+    api.storage.local
+      .get("settings")
+      .then(function (r) {
+        paintSet(r && r.settings);
+      })
+      .catch(function () {});
+    setBtn.addEventListener("click", function () {
+      api.storage.local
+        .get("settings")
+        .then(function (r) {
+          var s = Object.assign({}, (r && r.settings) || {});
+          s.replayInstant = !s.replayInstant;
+          return api.storage.local.set({ settings: s }).then(function () {
+            paintSet(s);
+          });
+        })
+        .catch(function () {});
+    });
 
     var footText = "F8 start/stop record · F9 buka/tutup menu ini · Escape tutup";
     try {

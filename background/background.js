@@ -56,6 +56,120 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
     }
   }
 
+  var CONTENT_FILES = [
+    "shared/util.js",
+    "content/overlay.js",
+    "content/selector.js",
+    "content/recorder.js",
+    "content/replayer.js",
+    "content/main.js"
+  ];
+
+  /** Inject content script (idempoten — tiap file punya guard anti-double). */
+  async function injectContentScripts(tabId) {
+    await api.scripting.executeScript({
+      target: { tabId: tabId, allFrames: false },
+      files: CONTENT_FILES
+    });
+  }
+
+  /**
+   * Tanya identitas dokumen ke content script: docToken (dokumen unik), URL,
+   * dan readyState. Dipakai mode reuse tab (tab yang sudah terbuka tidak akan
+   * mengirim PAGE_READY baru) dan penanda `pageload` (sudah pindah dokumen?).
+   */
+  bg.whoami = async function (tabId) {
+    try {
+      var res = await api.tabs.sendMessage(tabId, { type: "TESTERIA_WHOAMI" });
+      if (res && res.ok && typeof res.docToken === "string") return res;
+      return null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  /**
+   * Apakah tab sedang berganti dokumen (navigasi/reload penuh)? Dipakai untuk
+   * membedakan "content script mati karena dokumen dibongkar" dari "injection
+   * gagal": pada kasus pertama driver parkir & menunggu PAGE_READY, bukan gagal.
+   */
+  async function tabIsTurning(tabId) {
+    try {
+      var s = await T.getSession();
+      var known = s.replay && typeof s.replay.docUrl === "string" ? s.replay.docUrl : null;
+      var tab = await api.tabs.get(tabId);
+      if (!tab) return false;
+      if (tab.status === "loading") return true;
+      if (known && typeof tab.url === "string" && tab.url !== known) return true;
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * Cari tab yang bisa dipakai ulang untuk replay: origin SAMA dengan
+   * startUrl recording (utamakan tab aktif). Tanpa ini replay selalu membuka
+   * tab baru padahal user sudah berada di aplikasi yang sama.
+   */
+  async function findReuseTab(startUrl) {
+    var origin;
+    try {
+      origin = new URL(startUrl).origin;
+    } catch (e) {
+      return null;
+    }
+    var tabs = [];
+    try {
+      tabs = await api.tabs.query({});
+    } catch (e) {
+      return null;
+    }
+    var activeId = null;
+    try {
+      var act = await api.tabs.query({ active: true, lastFocusedWindow: true });
+      if (act && act[0]) activeId = act[0].id;
+    } catch (e) {
+      try {
+        var act2 = await api.tabs.query({ active: true, currentWindow: true });
+        if (act2 && act2[0]) activeId = act2[0].id;
+      } catch (e2) {}
+    }
+    var candidates = [];
+    for (var i = 0; i < tabs.length; i++) {
+      var t = tabs[i];
+      if (!t || typeof t.id !== "number" || !T.isRecordableUrl(t.url)) continue;
+      var same = false;
+      try {
+        same = new URL(t.url).origin === origin;
+      } catch (e) {
+        same = false;
+      }
+      if (same) candidates.push(t);
+    }
+    if (!candidates.length) return null;
+    for (var j = 0; j < candidates.length; j++) {
+      if (candidates[j].id === activeId) return candidates[j];
+    }
+    return candidates[0];
+  }
+
+  /**
+   * Migrasi data sekali jalan: step `navigate{url}` → penanda tanpa URL
+   * `pageload`, dan `url` dihapus dari semua step. Rekaman lama berhenti
+   * memaksa URL/id lama saat replay.
+   */
+  bg.migrateRecordings = async function () {
+    var recordings = await T.getRecordings();
+    if (T.recordingsNeedMigration(recordings)) {
+      await T.setRecordings(T.migrateRecordings(recordings));
+      await api.storage.local.set({ stepSchema: T.STEP_SCHEMA_VERSION });
+      return { ok: true, migrated: recordings.length };
+    }
+    await api.storage.local.set({ stepSchema: T.STEP_SCHEMA_VERSION });
+    return { ok: true, migrated: 0 };
+  };
+
   /** Mulai recording di tab tertentu. */
   bg.startRecording = async function (tabId, url) {
     var session = await T.getSession();
@@ -65,6 +179,9 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
     session.recordingTabId = tabId;
     session.pendingSteps = [];
     session.startUrl = T.isRecordableUrl(url) ? url : null;
+    // URL dokumen terakhir (transien, TIDAK masuk step) — untuk mendeteksi
+    // ganti dokumen penuh tanpa menyimpan URL di dalam step.
+    session.lastDocUrl = session.startUrl;
     session.startedAt = T.now();
     // CATATAN: lastToggleFromContent TIDAK di-reset di sini — guard anti
     // double-fire harus tetap aktif tepat setelah start (event commands dan
@@ -184,34 +301,11 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
     // modul IIFE ikut ter-reset) meski tiap file punya guard.
     if (!(await contentAlive(target.id))) {
       try {
-        await api.scripting.executeScript({
-          target: { tabId: target.id, allFrames: false },
-          files: [
-            "shared/util.js",
-            "content/overlay.js",
-            "content/selector.js",
-            "content/recorder.js",
-            "content/replayer.js",
-            "content/main.js"
-          ]
-        });
+        await injectContentScripts(target.id);
       } catch (e) {
         /* Halaman yang melarang injection (mis. web store) — recording tetap
            aktif; content script akan ikut saat navigasi berikutnya. */
       }
-    }
-    // Patch history di MAIN world — pushState dari kode halaman tidak terlihat
-    // dari isolated world (world berbeda → wrapper JS berbeda). Tanpa ini,
-    // navigasi SPA tidak terekam sama sekali.
-    try {
-      await api.scripting.executeScript({
-        target: { tabId: target.id, allFrames: false },
-        world: "MAIN",
-        files: ["content/spa-main.js"]
-      });
-    } catch (e) {
-      /* Firefox lama tanpa world: MAIN — SPA SPA-recording degrade ke popstate
-         saja; fitur lain tetap jalan. */
     }
 
     // Sinkronkan state ke content script tab target (REC dot).
@@ -241,19 +335,85 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
     return replayDriverActive;
   };
 
-  bg.setReplayState = async function (patch) {
-    var session = await T.getSession();
-    var replay = session.replay && typeof session.replay === "object" ? session.replay : {};
-    for (var k in patch) replay[k] = patch[k];
-    session.replay = replay;
-    await T.setSession(session);
-    return session.replay;
+  /**
+   * Beri tahu content script tab replay bahwa step yang sedang dieksekusi
+   * harus DIBATALKAN (Stop/Skip/Pause ditekan user). Keyed ke nomor step
+   * in-flight (1-based): pesan abort yang telat datang tidak boleh mematikan
+   * step berikutnya. Tanpa ini, elemen yang baru muncul setelah user menekan
+   * Stop tetap diklik — "Stop kok masih jalan".
+   */
+  bg.abortInFlight = function (tabId) {
+    if (!tabId || replayDriverIndex < 0) return;
+    api.tabs
+      .sendMessage(tabId, {
+        type: "TESTERIA_REPLAY_ABORT",
+        stepNumber: replayDriverIndex + 1
+      })
+      .catch(function () {});
   };
 
-  bg.clearReplayState = async function () {
-    var session = await T.getSession();
-    session.replay = null;
-    await T.setSession(session);
+  /**
+   * Semua read-modify-write state replay diserialisasi dalam SATU antrean.
+   * Driver replay berjalan di luar antrean pesan (fire-and-forget dari
+   * handler), jadi dua penulis bisa saling menimpa: penulis yang membaca
+   * session lebih dulu lalu menulis belakangan menimpa keadaan yang lebih
+   * baru — pernah menghasilkan "replay hantu" `{status:"running"}` yang
+   * menimpa state replay baru lengkap dengan total/labels.
+   */
+  var stateQueue = Promise.resolve();
+  function serializeState(fn) {
+    var run = stateQueue.then(fn, fn);
+    stateQueue = run.then(
+      function () {},
+      function () {}
+    );
+    return run;
+  }
+
+  /**
+   * Tulis (patch) state replay. HANYA patch yang meng-INISIALISASI replay
+   * (punya recordingId — lihat bg.startReplay) yang boleh MEMBUAT objek replay
+   * baru. Tanpa aturan ini, penulis yang membaca session saat replay sudah
+   * bersih lalu menulis belakangan bisa "menghidupkan" replay hantu setengah
+   * jadi (mis. `{status:"running"}` tanpa total/labels) — pernah terlihat
+   * sebagai replay yang macet dan panel kosong. Return replay atau null (bila
+   * tidak ada replay untuk ditulis).
+   */
+  bg.setReplayState = function (patch) {
+    return serializeState(async function () {
+      var session = await T.getSession();
+      if (!session.replay && !patch.recordingId) return null;
+      var replay = session.replay && typeof session.replay === "object" ? session.replay : {};
+      for (var k in patch) replay[k] = patch[k];
+      session.replay = replay;
+      await T.setSession(session);
+      return session.replay;
+    });
+  };
+
+  bg.clearReplayState = function () {
+    return serializeState(async function () {
+      var session = await T.getSession();
+      session.replay = null;
+      await T.setSession(session);
+    });
+  };
+
+
+  /**
+   * Promosi loading→running yang AMAN: hanya bila replay di session masih
+   * milik tabId dan masih "loading". Return false bila tidak (state sudah
+   * dibersihkan/diganti) — pemanggil harus keluar.
+   */
+  bg.promoteReplay = function (tabId) {
+    return serializeState(async function () {
+      var session = await T.getSession();
+      var r = session.replay;
+      if (!r || r.tabId !== tabId || r.status !== "loading") return false;
+      r.status = "running";
+      await T.setSession(session);
+      return true;
+    });
   };
 
   /**
@@ -268,7 +428,62 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
    * PAGE_READY yang hilang (redirect cepat / injection telat) dengan
    * me-re-inject content script lalu langsung menjalankan driver.
    */
-  bg.startReplay = async function (recordingId) {
+  /**
+   * Watchdog tab baru: bila PAGE_READY tak kunjung datang (redirect klien super
+   * cepat sampai content script keburu mati, injection telat, dsb.), coba
+   * re-inject lalu jalankan driver langsung — jangan biarkan replay mangkrak.
+   */
+  bg.armStartWatchdog = function (tabId) {
+    setTimeout(async function () {
+      try {
+        var s = await T.getSession();
+        if (!s.replay || s.replay.status !== "loading" || s.replay.tabId !== tabId) return;
+        try {
+          await injectContentScripts(tabId);
+        } catch (e) {
+          await bg.failReplay(
+            "Halaman replay tidak merespons (content script tidak bisa di-inject). Coba lagi."
+          );
+          return;
+        }
+        var s2 = await T.getSession();
+        if (!s2.replay || s2.replay.status !== "loading") return;
+        var who = await bg.whoami(tabId);
+        await bg.setReplayState({
+          status: "running",
+          docToken: who && who.docToken ? who.docToken : s2.replay.docToken || null,
+          docUrl: who && who.url ? who.url : s2.replay.docUrl || null
+        });
+        bg.resumeDriver(tabId);
+      } catch (e) {
+        /* SW reload di tengah watchdog — biarkan. */
+      }
+    }, 12000);
+  };
+
+  /**
+   * Watchdog penanda `pageload`: dokumen baru tidak kunjung datang → gagal
+   * eksplisit (dulu: replay menggantung menunggu PAGE_READY yang tak akan ada).
+   */
+  bg.armDocWatchdog = function (tabId, index) {
+    setTimeout(async function () {
+      try {
+        var s = await T.getSession();
+        if (!s.replay || s.replay.tabId !== tabId || !s.replay.awaitingDoc) return;
+        if (["running", "loading"].indexOf(s.replay.status) === -1) return;
+        await bg.failReplay(
+          "Halaman berikutnya tidak termuat setelah 20 detik (penanda ganti halaman di step " +
+            ((typeof index === "number" ? index : 0) + 1) +
+            "). Navigasi ini tidak bisa dipicu aksi user — rekam ulang, atau tambahkan aksi (klik) yang memicunya.",
+          typeof index === "number" ? index : null
+        );
+      } catch (e) {
+        /* SW reload — biarkan. */
+      }
+    }, 20000);
+  };
+
+  bg.startReplay = async function (recordingId, opts) {
     var recordings = await T.getRecordings();
     var rec = null;
     for (var i = 0; i < recordings.length; i++) {
@@ -279,6 +494,9 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
     if (!Array.isArray(rec.steps) || rec.steps.length === 0) {
       return { ok: false, error: "no-steps" };
     }
+    // Normalisasi di memori: step navigate{url} warisan TIDAK boleh memaksa URL
+    // saat replay. Migrasi permanen dilakukan bg.migrateRecordings().
+    rec = T.migrateRecording(rec);
 
     var session = await T.getSession();
     if (session.recording) return { ok: false, error: "recording-in-progress" };
@@ -288,6 +506,9 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
     ) {
       return { ok: false, error: "replay-in-progress" };
     }
+
+    var settings = await T.getSettings();
+    var allowReuse = !(opts && opts.newTab) && settings.replayReuseTab !== false;
 
     await bg.setReplayState({
       recordingId: rec.id,
@@ -302,12 +523,34 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
       // docToken/startedIndex/notice replay lama bocor ke yang baru.
       docToken: null,
       docUrl: null,
+      // docSeq = jumlah dokumen BARU yang sudah melapor di tab replay ini;
+      // pageloadBaseline = nilai docSeq saat step terakhir dikirim. Keduanya
+      // WAJIB direset: kalau bocor dari replay sebelumnya, penanda `pageload`
+      // membaca "dokumen sudah berganti" padahal belum (ditemukan lewat V3
+      // yang jalan setelah replay lain di konteks yang sama).
+      docSeq: 0,
+      pageloadBaseline: null,
       startedIndex: null,
+      awaitingDoc: null,
+      awaitingSince: 0,
+      reusedTab: false,
       notice: null,
       failedStep: null,
       labels: rec.steps.map(bg.labelForStep), // untuk daftar task di panel/popup
+      hints: rec.steps.map(bg.stepHint),
       types: rec.steps.map(function (s) { return (s && s.type) || "?"; }),
     });
+
+    // ---- Mode reuse: pakai tab yang sudah terbuka bila origin-nya sama ----
+    // Tidak ada navigasi ke startUrl: user sedang berada di halaman aplikasi
+    // (mis. /so/456) dan replay dijalankan di situ — URL/id tidak dipaksakan.
+    if (allowReuse) {
+      var candidate = await findReuseTab(rec.startUrl);
+      if (candidate) {
+        var adopted = await bg.adoptTab(candidate.id, rec);
+        if (adopted) return { ok: true, total: rec.steps.length, reusedTab: true };
+      }
+    }
 
     var tab;
     try {
@@ -316,82 +559,134 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
       await bg.failReplay("gagal membuka tab replay (" + e.message + ").");
       return { ok: false, error: "tab-create-failed" };
     }
-    await bg.setReplayState({ tabId: tab.id });
-
-    // Watchdog: bila PAGE_READY tak kunjung datang (redirect klien super cepat
-    // sampai content script keburu mati, injection telat, dsb.), coba re-inject
-    // lalu jalankan driver langsung — jangan biarkan replay menggantung diam.
-    setTimeout(async function () {
-      try {
-        var s = await T.getSession();
-        if (!s.replay || s.replay.status !== "loading" || s.replay.tabId !== tab.id) return;
-        try {
-          await api.scripting.executeScript({
-            target: { tabId: tab.id, allFrames: false },
-            files: [
-              "shared/util.js",
-              "content/overlay.js",
-              "content/selector.js",
-              "content/recorder.js",
-              "content/replayer.js",
-              "content/main.js"
-            ]
-          });
-        } catch (e) {
-          await bg.failReplay(
-            "Halaman replay tidak merespons (content script tidak bisa di-inject). Coba lagi."
-          );
-          return;
-        }
-        var s2 = await T.getSession();
-        if (!s2.replay || s2.replay.status !== "loading") return;
-        await bg.setReplayState({ status: "running" });
-        bg.resumeDriver(tab.id);
-      } catch (e) {
-        /* SW reload di tengah watchdog — biarkan. */
-      }
-    }, 12000);
-
+    await bg.setReplayState({ tabId: tab.id, reusedTab: false });
+    bg.armStartWatchdog(tab.id);
     return { ok: true, total: rec.steps.length };
   };
 
-  /** Label pendek satu step untuk daftar task. */
+  /**
+   * Adopsi tab yang sudah terbuka sebagai tab replay (mode reuse).
+   * Return true bila berhasil; false bila harus fallback ke tab baru
+   * (content script tidak bisa dihubungi, mis. halaman dilindungi).
+   */
+  bg.adoptTab = async function (tabId, rec) {
+    try {
+      await api.tabs.update(tabId, { active: true });
+    } catch (e) {
+      /* tab bisa saja baru ditutup user — lanjut, WHOAMI yang menentukan */
+    }
+    var tab = null;
+    try {
+      tab = await api.tabs.get(tabId);
+    } catch (e) {
+      return false;
+    }
+    if (!tab || !T.isRecordableUrl(tab.url)) return false;
+
+    await bg.setReplayState({ tabId: tabId, reusedTab: true });
+    if (!(await contentAlive(tabId))) {
+      try {
+        await injectContentScripts(tabId);
+      } catch (e) {
+        /* WHOAMI di bawah yang memutuskan */
+      }
+    }
+    var who = await bg.whoami(tabId);
+    if (!who) {
+      await bg.setReplayState({ tabId: null, reusedTab: false });
+      return false;
+    }
+    await bg.setReplayState({
+      docToken: who.docToken,
+      docUrl: who.url || tab.url || null,
+      status: "running",
+      notice: "Memakai tab yang sedang terbuka (domain sama) — tanpa membuka tab baru."
+    });
+    bg.resumeDriver(tabId);
+    return true;
+  };
+
+  /**
+   * Fallback nama manusiawi dari kandidat selector (rekaman lama tanpa
+   * `step.name`): teks accessible → atribut name/aria/placeholder/testid → id.
+   * Return "" bila tidak ada yang layak (labelForStep tetap punya fallback).
+   */
+  bg.hintFromSelector = function (sel) {
+    if (!sel || typeof sel !== "object") return "";
+    if (sel.text) return String(sel.text).replace(/\s+/g, " ").trim().slice(0, 40);
+    var cands = [];
+    if (sel.css) cands.push(String(sel.css));
+    if (sel.alt && sel.alt.length) {
+      for (var i = 0; i < sel.alt.length; i++) {
+        if (sel.alt[i] && sel.alt[i].css) cands.push(String(sel.alt[i].css));
+        if (sel.alt[i] && sel.alt[i].text) return String(sel.alt[i].text).slice(0, 40);
+      }
+    }
+    for (var j = 0; j < cands.length; j++) {
+      var m = cands[j].match(/\[(?:name|aria-label|placeholder|data-testid|data-test|data-cy)="([^"]+)"/i);
+      if (m && m[1]) return m[1].replace(/[_-]+/g, " ").trim().slice(0, 40);
+    }
+    for (var k = 0; k < cands.length; k++) {
+      if (cands[k].charAt(0) === "#" && cands[k].length > 1) {
+        return cands[k].slice(1).replace(/[_-]+/g, " ").trim().slice(0, 40);
+      }
+    }
+    var first = String(cands[0] || "");
+    var short = first.replace(/\[.*$/, "").split(">").pop().trim();
+    return short.slice(0, 32);
+  };
+
+  /** Label pendek satu step untuk daftar task (nama manusiawi, bukan selector). */
   bg.labelForStep = function (step) {
-    var sel = step && step.selector ? step.selector : null;
-    var target =
-      (sel && (sel.css || (sel.alt && sel.alt[0] && sel.alt[0].css) || "")) || "";
-    var text = sel && sel.text ? ' "' + String(sel.text).slice(0, 16) + '"' : "";
-    var t = String(target).replace(/\[.*$/, "").slice(0, 24);
-    switch (step && step.type) {
-      case "navigate":
-        return "→ " + String(step.url || step.value || "").replace(/^https?:\/\//, "").slice(0, 30);
+    if (!step) return "step";
+    // Penanda ganti dokumen tanpa URL — tidak ada aksi elemen sama sekali.
+    if (step.type === "pageload" || step.type === "navigate") return "muat halaman berikutnya";
+    var target = step.name ? String(step.name).slice(0, 40) : bg.hintFromSelector(step.selector);
+    switch (step.type) {
       case "input":
-        return (step.masked ? "password " : "isi ") + (t || text || "field");
+        return (step.masked ? "password " : "isi ") + (target || "field");
       case "select":
-        return "pilih " + (t || "dropdown") + (step.value ? " = " + String(step.value).slice(0, 12) : "");
+        return "pilih " + (target || "dropdown") + (step.value ? " = " + String(step.value).slice(0, 16) : "");
       case "check":
-        return (step.value === "checked" ? "centang " : "lepas ") + (t || "checkbox");
+        return (step.value === "checked" ? "centang " : "lepas ") + (target || "checkbox");
       case "key":
         return "tombol " + String(step.value || "");
       case "assert": {
         var mode = step.assertMode || "text";
         // Jangan pernah bocorkan value password di daftar task.
         var expect = step.masked ? "***" : '"' + String(step.value == null ? "" : step.value).slice(0, 18) + '"';
-        if (mode === "value") return "verifikasi nilai " + (t || "field") + " = " + expect;
-        if (mode === "checked") return (step.value === "checked" ? "verifikasi tercentang " : "verifikasi tidak tercentang ") + (t || "checkbox");
-        if (mode === "visible") return "verifikasi tampil " + (t || text || "elemen");
-        return "verifikasi teks " + (t || text || "elemen") + (step.value ? " mengandung " + expect : "");
+        if (mode === "value") return "verifikasi nilai " + (target || "field") + " = " + expect;
+        if (mode === "checked") return (step.value === "checked" ? "verifikasi tercentang " : "verifikasi tidak tercentang ") + (target || "checkbox");
+        if (mode === "visible") return "verifikasi tampil " + (target || "elemen");
+        return "verifikasi teks " + (target || "elemen") + (step.value ? " mengandung " + expect : "");
       }
       case "click":
         return (step.dblclick ? "klik 2x " : step.button === "right" ? "klik kanan " : "klik ") +
-          (text.trim() ? text.trim().slice(0, 18) : t || "elemen");
+          (target || "elemen");
       default:
-        return (step && step.type) || "step";
+        return step.type || "step";
     }
+  };
+
+  /** Baris sekunder panel: selector teknis (untuk debugging), bukan judul step. */
+  bg.stepHint = function (step) {
+    if (!step) return "";
+    if (step.type === "pageload" || step.type === "navigate") return "tunggu dokumen baru";
+    var sel = step.selector || {};
+    var which = sel.css || (sel.alt && sel.alt[0] && sel.alt[0].css) || sel.xpath || "";
+    which = String(which);
+    if (which.length > 64) which = which.slice(0, 61) + "…";
+    if (which) return which;
+    if (step.type === "key") return "keyboard";
+    return "";
   };
 
   /** Ringkasan step untuk pesan error. */
   bg.describeStep = function (step, index) {
+    var n = (typeof index === "number" ? index : 0) + 1;
+    if (step && (step.type === "pageload" || step.type === "navigate")) {
+      return "Step " + n + " (muat halaman berikutnya)";
+    }
     var sel = step && step.selector ? step.selector : {};
     var which =
       sel.css ||
@@ -399,7 +694,8 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
       sel.xpath ||
       (sel.alt && sel.alt[0] && sel.alt[0].css) ||
       "(tanpa selector)";
-    return "Step " + (index + 1) + " (" + (step && step.type ? step.type : "?") + " → " + which + ")";
+    var nm = step && step.name ? " \"" + String(step.name).slice(0, 30) + "\"" : "";
+    return "Step " + n + " (" + (step && step.type ? step.type : "?") + nm + " → " + which + ")";
   };
 
   /**
@@ -465,6 +761,23 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
    * melanjutkan buta di halaman yang sudah di-reset.
    * Return false bila driver harus keluar (flags sudah dibersihkan).
    */
+  /**
+   * Catat baseline dokumen (`docSeq`) SEBELUM step dieksekusi. Penanda
+   * `pageload` setelah step ini hanya menunggu bila dokumen memang belum
+   * berganti sejak titik ini. Tanpa baseline, PAGE_READY yang tiba di tengah
+   * eksekusi step (navigasi akibat klik step itu) membuat penanda salah
+   * menyimpulkan "dokumen belum berganti" → replay mangkrak menunggu dokumen
+   * yang sudah tiba, lalu gagal 20 dtk palsu (terjadi pada flow multi-halaman).
+   */
+  async function markDocBaseline() {
+    await serializeState(async function () {
+      var s = await T.getSession();
+      if (!s.replay) return;
+      s.replay.pageloadBaseline = s.replay.docSeq || 0;
+      await T.setSession(s);
+    });
+  }
+
   async function runWrite(tabId, index) {
     var s = await T.getSession();
     if (!s.replay || s.replay.tabId !== tabId || s.replay.pendingPause) {
@@ -489,7 +802,10 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
     if (!replay || ["running", "loading"].indexOf(replay.status) === -1) return;
     if (replay.tabId !== tabId) return; // bukan tab replay
     if (replay.status === "loading") {
-      await bg.setReplayState({ status: "running" });
+      // Dijaga: promosi tidak boleh menghidupkan replay yang sudah dibersihkan
+      // atau diganti replay lain di antara await di atas.
+      var promoted = await bg.promoteReplay(tabId);
+      if (!promoted) return;
     }
 
     var recordings = await T.getRecordings();
@@ -502,7 +818,9 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
       return;
     }
 
-    var steps = rec.steps;
+    // Normalisasi di memori: warisan navigate{url} jadi penanda pageload tanpa
+    // URL — replay TIDAK PERNAH memindahkan halaman atas inisiatif sendiri.
+    var steps = T.migrateSteps(rec.steps);
     var index = replay.index || 0;
 
     if (replayDriverActive) return; // sudah ada driver berjalan untuk replay ini
@@ -541,22 +859,55 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
       // pendingPause dari guard reload — jangan menimpa pause itu.
       if (!(await runWrite(tabId, index))) return;
 
-      // ------------------------- navigate -------------------------
-      if (step.type === "navigate") {
-        var target = step.url || step.value;
-        if (!T.isRecordableUrl(target)) {
-          await bg.failReplay(bg.describeStep(step, index) + ": URL navigasi tidak valid.", index);
-          return;
+      // ------------------------- pageload -------------------------
+      // Penanda TANPA URL: dokumen berganti sebagai efek aksi sebelumnya
+      // (submit form / redirect antar-dokumen). Tidak ada aksi yang dieksekusi
+      // dan tidak ada URL yang dipaksakan — driver hanya memastikan sudah
+      // berada di dokumen baru, lalu lanjut. Bila dokumen tak kunjung berganti
+      // (navigasi yang tidak bisa dipicu aksi user), watchdog gagal eksplisit.
+      if (step.type === "pageload") {
+        var pgSession = await T.getSession();
+        var pgReplay = pgSession.replay || {};
+        var pgToken = pgReplay.docToken || null;
+        var whoNow = await bg.whoami(tabId);
+        // "Sudah berganti dokumen?" DUA sinyal:
+        //   1. docSeq > pageloadBaseline — dokumen baru MELAPOR (PAGE_READY)
+        //      sejak step sebelumnya dicatat; ini tahan terhadap PAGE_READY
+        //      yang datang sementara step sebelumnya masih dieksekusi.
+        //   2. docToken sesi berbeda dari dokumen yang hidup sekarang — jalur
+        //      lama, tetap dipakai bila belum ada baseline (mis. penanda di
+        //      step pertama).
+        var docChanged =
+          typeof pgReplay.pageloadBaseline === "number"
+            ? (pgReplay.docSeq || 0) > pgReplay.pageloadBaseline
+            : false;
+        if (!docChanged && whoNow && whoNow.docToken && whoNow.docToken !== pgToken) {
+          docChanged = true;
         }
-        await bg.setReplayState({ index: index + 1 }); // step navigate dianggap selesai saat tab.update
-        await T.sleep(150); // beri waktu popup/UI melihat progres sebelum navigasi
-        try {
-          await api.tabs.update(tabId, { url: target });
-        } catch (e) {
-          await bg.failReplay(bg.describeStep(step, index) + ": gagal membuka URL (" + e.message + ").", index);
-          return;
+        if (docChanged) {
+          // Sudah pindah dokumen sebelum penanda ini tercapai.
+          await bg.setReplayState({
+            docToken: whoNow.docToken,
+            docUrl: whoNow.url || null,
+            index: index + 1,
+            status: "running",
+            startedIndex: null,
+            awaitingDoc: null,
+            awaitingSince: 0
+          });
+          index += 1;
+          continue;
         }
-        // Keluar dari loop; kelanjutan dipicu PAGE_READY berikutnya.
+        // Masih dokumen lama (atau content script sedang dibongkar saat
+        // navigasi): parkir, tunggu PAGE_READY dokumen berikutnya.
+        await bg.setReplayState({
+          index: index + 1,
+          status: "running",
+          startedIndex: null,
+          awaitingDoc: true,
+          awaitingSince: Date.now()
+        });
+        bg.armDocWatchdog(tabId, index);
         replayDriverActive = false;
         replayDriverIndex = -1;
         return;
@@ -577,6 +928,10 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
       // (Satu-satunya checkpoint saat delay = 0.)
       if ((await driverCheckpoint(tabId, index)) !== "ok") return;
 
+      // Baseline dokumen untuk penanda `pageload` berikutnya — dicatat SEBELUM
+      // step dikirim (lihat markDocBaseline).
+      await markDocBaseline();
+
       // Tandai step IN FLIGHT: bila tab mati di tengah eksekusi (crash, reload
       // manual), PAGE_READY dokumen baru melihat index === startedIndex dan
       // mem-parkir replay di paused alih-alih mengulang aksi di halaman yang
@@ -595,6 +950,16 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
           });
           break;
         } catch (e) {
+          // Dokumen sedang berganti (navigasi/reload penuh) — BUKAN content
+          // script rusak: parkir dan tunggu PAGE_READY dokumen baru. Tanpa ini,
+          // flow multi-halaman (klik submit → halaman baru) mati di tengah.
+          if (await tabIsTurning(tabId)) {
+            await bg.setReplayState({ awaitingDoc: true, awaitingSince: Date.now() });
+            bg.armDocWatchdog(tabId, index);
+            replayDriverActive = false;
+            replayDriverIndex = -1;
+            return;
+          }
           // Content script belum hidup (document sedang berputar) — beri waktu
           // sebentar lalu coba lagi (maks 12× ≈ 3 dtk) sebelum gagal. Dulu
           // error ini langsung mematikan replay padahal halaman sedang loading.
@@ -641,9 +1006,42 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
       }
 
       if (!result || !result.ok) {
+        // Step DIBATALKAN user (Stop/Skip/Pause) di tengah eksekusi: jangan
+        // pernah melaporkannya sebagai kegagalan — user sengaja membatalkan.
+        if (result && result.aborted) {
+          replayDriverActive = false;
+          replayDriverIndex = -1;
+          var abortedSession = await T.getSession();
+          if (
+            abortedSession.replay &&
+            abortedSession.replay.tabId === tabId &&
+            abortedSession.replay.status === "running"
+          ) {
+            bg.resumeDriver(tabId); // Skip: eksekusi step berikutnya
+          }
+          return;
+        }
         var reason = result && result.error ? result.error : "alasan tidak diketahui";
         await bg.failReplay(bg.describeStep(step, index) + ": " + reason + ".", index);
         return;
+      }
+
+      // Upgrade label best-effort untuk rekaman lama tanpa `step.name`: replayer
+      // mengembalikan nama manusiawi elemen yang benar-benar ditemukan (mis.
+      // "Email"), sehingga daftar step di panel langsung terbaca manusia dan
+      // tetap sinkron dengan elemen nyata di halaman.
+      if (!step.name && result.name) {
+        var lblSession = await T.getSession();
+        var lblNow =
+          lblSession.replay && Array.isArray(lblSession.replay.labels)
+            ? lblSession.replay.labels[index]
+            : null;
+        var upgraded = bg.labelForStep(Object.assign({}, step, { name: result.name }));
+        if (upgraded && upgraded !== lblNow && lblSession.replay) {
+          var newLabels = lblSession.replay.labels.slice();
+          newLabels[index] = upgraded;
+          await bg.setReplayState({ labels: newLabels });
+        }
       }
 
       if (result.waitPassword) {
@@ -682,6 +1080,8 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
   };
 
   bg.stopReplay = async function () {
+    var stopSession = await T.getSession();
+    bg.abortInFlight(stopSession.replay && stopSession.replay.tabId ? stopSession.replay.tabId : null);
     replayDriverActive = false;
     replayDriverIndex = -1;
     await bg.clearReplayState();
@@ -719,21 +1119,22 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
 
             if (session.recording) {
               var isRecordingTab = sTabId === session.recordingTabId;
-              // Full page load di tab recording → step navigate (URL berubah dari
-              // step sebelumnya), atau step pertama kalau buffer masih kosong.
+              // Ganti dokumen PENUH di tab recording → penanda TANPA URL
+              // (`pageload`). URL/id tidak pernah masuk ke step: navigasi SPA
+              // tidak terekam sama sekali (FE yang routing dari aksi user),
+              // dan penanda ini hanya berarti "dokumen berganti".
               if (isRecordingTab) {
-                var steps = session.pendingSteps || [];
-                var last = steps[steps.length - 1];
-                var lastUrl = last && last.type === "navigate" ? last.url : session.startUrl;
-                if (T.isRecordableUrl(pageUrl) && pageUrl !== lastUrl) {
+                var lastDoc = session.lastDocUrl || session.startUrl;
+                if (T.isRecordableUrl(pageUrl) && pageUrl !== lastDoc) {
                   session.pendingSteps.push({
-                    type: "navigate",
+                    type: "pageload",
                     selector: null,
                     value: null,
-                    url: pageUrl,
+                    name: null,
                     delayMs: 0,
                     ts: T.now() - (session.startedAt || T.now())
                   });
+                  session.lastDocUrl = pageUrl;
                   await T.setSession(session);
                 }
               }
@@ -742,15 +1143,6 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
               if (isRecordingTab) {
                 api.tabs
                   .sendMessage(sTabId, { type: "TESTERIA_REC_STATE", recording: true })
-                  .catch(function () {});
-                // Patch MAIN world per dokumen baru (guard idempoten di dalam
-                // file membuat re-inject aman).
-                api.scripting
-                  .executeScript({
-                    target: { tabId: sTabId, allFrames: false },
-                    world: "MAIN",
-                    files: ["content/spa-main.js"]
-                  })
                   .catch(function () {});
               }
             } else if (
@@ -784,6 +1176,18 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
                   typeof rp.docUrl === "string" && rp.docUrl === pageUrl;
                 rp.docToken = token;
                 rp.docUrl = pageUrl;
+                // Penghitung dokumen baru: dipakai penanda `pageload` supaya
+                // "dokumen sudah berganti" tidak disimpulkan dari
+                // perbandingan docToken (PAGE_READY bisa datang SEMENTARA step
+                // sebelumnya masih in-flight — dulu itu membuat penanda
+                // mengira dokumen belum berganti lalu mangkrak 20 dtk).
+                rp.docSeq = (typeof rp.docSeq === "number" ? rp.docSeq : 0) + 1;
+                if (rp.awaitingDoc) {
+                  // Penanda `pageload` terpenuhi: dokumen baru sudah melapor.
+                  rp.awaitingDoc = null;
+                  rp.awaitingSince = 0;
+                  rpChanged = true;
+                }
                 if (midStep && sameDoc) {
                   rp.status = "paused";
                   rp.pendingPause = true; // STICKY: driver (re-send retry!) tidak boleh menimpa
@@ -873,7 +1277,9 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
 
           case "TESTERIA_REPLAY": {
             // Popup meminta replay dimulai (driver jalan di background).
-            sendResponse(await bg.startReplay(msg.id));
+            // msg.newTab=true → paksa tab baru (user memilih "mulai dari URL
+            // rekaman"); default: pakai tab aktif bila domainnya sama.
+            sendResponse(await bg.startReplay(msg.id, { newTab: msg.newTab === true }));
             return;
           }
 
@@ -885,6 +1291,9 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
               sendResponse({ ok: false, error: "no-running-replay" });
               return;
             }
+            // Step in-flight (bila ada) dibatalkan: jeda berarti benar-benar
+            // berhenti, bukan "selesaikan dulu step yang sedang mencari elemen".
+            bg.abortInFlight(ps.replay.tabId);
             await bg.setReplayState({ status: "paused" });
             sendResponse({ ok: true });
             return;
@@ -922,13 +1331,28 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
               return;
             }
             var total = ks.replay.total || 0;
+            var skipped = (ks.replay.index || 0) + 1;
             var nextIdx = (ks.replay.index || 0) + 1;
+            bg.abortInFlight(ks.replay.tabId); // step in-flight (bila ada) dibatalkan
             if (nextIdx >= total) {
               replayDriverActive = false;
               replayDriverIndex = -1;
-              await bg.setReplayState({ index: total, status: "done", error: null, startedIndex: null, notice: null });
+              await bg.setReplayState({
+                index: total,
+                status: "done",
+                error: null,
+                startedIndex: null,
+                notice: "Step " + skipped + " dilewati — tidak ada step berikutnya, replay selesai."
+              });
             } else {
-              await bg.setReplayState({ index: nextIdx, status: "running", startedIndex: null, notice: null, pendingPause: null });
+              await bg.setReplayState({
+                index: nextIdx,
+                status: "running",
+                error: null,
+                startedIndex: null,
+                notice: "Step " + skipped + " dilewati — lanjut ke step " + (nextIdx + 1) + ".",
+                pendingPause: null
+              });
               if (!bg.replayDriverBusy()) {
                 bg.resumeDriver(ks.replay.tabId);
               }
@@ -1001,6 +1425,7 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
               sendResponse({ ok: false, error: "step-out-of-range" });
               return;
             }
+            bg.abortInFlight(jt.replay.tabId); // step in-flight tidak boleh lanjut
             // Bila tab replay sudah tertutup, buka lagi dari startUrl recording.
             var rec2 = null;
             var recs2 = await T.getRecordings();
@@ -1025,6 +1450,9 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
                 notice: null,
                 docToken: null,
                 docUrl: null,
+                docSeq: 0,
+                pageloadBaseline: null,
+                awaitingDoc: null,
                 tabId: t2.id
               });
               sendResponse({ ok: true });
@@ -1088,11 +1516,16 @@ var bg = (globalThis.TESTERIA_BG = globalThis.TESTERIA_BG || {});
     await bg.setRecBadge(false);
   };
 
-  // Bersihkan badge & session saat extension dimulai/terpasang ulang.
-  api.runtime.onStartup.addListener(function () {
+  // Bersihkan badge & session + migrasi data saat extension dimulai/terpasang.
+  // Migrasi menghapus URL dari step rekaman lama (navigate → pageload) supaya
+  // replay tidak pernah dipaksa kembali ke id lama (mis. /wo/123).
+  function startupMaintenance() {
     bg.resetStaleSession().catch(function () {});
-  });
-  api.runtime.onInstalled.addListener(function () {
-    bg.resetStaleSession().catch(function () {});
-  });
+    bg.migrateRecordings().catch(function () {});
+  }
+  api.runtime.onStartup.addListener(startupMaintenance);
+  api.runtime.onInstalled.addListener(startupMaintenance);
+  // Service worker Chrome bisa dibangkitkan tanpa event startup (mis. setelah
+  // browser lama berjalan) — pastikan migrasi tetap jalan sekali.
+  bg.migrateRecordings().catch(function () {});
 })();

@@ -69,6 +69,14 @@ async function startReplay(context, recId) {
 async function main() {
   const { context, server } = await launch(8899);
   try {
+    // Replay harus membuka tab BARU (halaman recording masih terbuka) — matikan
+    // reuse tab supaya page-event di startReplay tetap deterministik.
+    await bgEval(context, async () => {
+      await browser.storage.local.set({
+        settings: { replayReuseTab: false, replayInstant: false }
+      });
+    });
+
     // =============================================== 1. RECORD dengan assertion
     const page = await context.newPage();
     await page.goto(BASE + "/");

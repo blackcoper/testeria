@@ -5,9 +5,13 @@
  * (yang menyimpannya di storage.local, bukan memory).
  *
  * Yang direkam: click, dblclick, contextmenu, input teks (debounce 500 ms),
- * change (select/checkbox/radio), key penting (Enter/Tab/Escape/arrow),
- * navigasi URL (SPA pushState/replaceState/popstate; full page load ditangani
- * background lewat PAGE_READY).
+ * change (select/checkbox/radio), key penting (Enter/Tab/Escape/arrow).
+ *
+ * URL TIDAK PERNAH menjadi step: navigasi SPA (pushState/replaceState/popstate)
+ * sengaja tidak direkam — route berubah karena FE menanggapi aksi user yang
+ * memang terekam, sehingga id halaman baru dihasilkan FE, bukan dipaksakan URL
+ * rekaman. Ganti dokumen penuh (submit form/redirect antar-dokumen) dicatat
+ * background lewat PAGE_READY sebagai penanda TANPA URL `pageload`.
  *
  * Yang TIDAK direkam: scroll (v1), jejak mouse (path) — kursor virtual replay
  * kini bergerak glide halus tanpa jejak terekam, penekanan F8/Ctrl+Shift+Y (toggle sendiri),
@@ -15,6 +19,11 @@
  * (isTrusted:false — komponen menu/accordion sering me-re-dispatch click;
  * tanpa filter ini satu klik terekam dua kali dan menu kebuka lalu ketutup
  * lagi saat replay), dan value password asli (diganti "<masked>" + masked:true).
+ *
+ * Setiap step menyimpan `kind` (sidik jari jenis elemen) dan `name` (nama
+ * manusiawi: label field / teks tombol) — dipakai replayer untuk menolak
+ * kandidat selector yang salah elemen dan panel untuk menampilkan daftar step
+ * yang bisa dibaca manusia.
  *
  * Aman dievaluasi ulang: listener dipasang sekali (guard), state di-reset.
  */
@@ -36,8 +45,7 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     timers: new WeakMap(), // elemen input -> id timer debounce
     lastValue: new WeakMap(), // elemen -> nilai terakhir yang SUDAH direkam
     pendingEls: [], // elemen dengan debounce aktif (untuk flushAllPending)
-    installed: false,
-    spaPatched: false
+    installed: false
   };
 
   recorder.isRecording = function () {
@@ -113,7 +121,7 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
    */
   function assertionFor(el) {
     var sel = selectorFor(el);
-    var step = { type: "assert", selector: sel, url: null };
+    var step = { type: "assert", selector: sel, value: null };
     var tag = el.tagName;
     if (tag === "INPUT" && (el.type === "checkbox" || el.type === "radio")) {
       // Chrome/Firefox PRE-TOGGLE checkedness checkbox/radio SELAMA dispatch
@@ -143,6 +151,27 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     }
   }
 
+  /** Sidik jari jenis elemen (untuk verifikasi saat replay). */
+  function kindFor(el) {
+    var gen = globalThis.TESTERIA_SELECTOR;
+    try {
+      return gen && gen.describeElement ? gen.describeElement(el) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /** Nama manusiawi elemen (label field / teks tombol) — bukan selector. */
+  function nameFor(el) {
+    var gen = globalThis.TESTERIA_SELECTOR;
+    try {
+      var n = gen && gen.friendlyName ? gen.friendlyName(el) : "";
+      return n || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   function sendStep(step) {
     step.ts = 0; // background mengisi ts relatif & delayMs (clamp 0..2000)
     step.delayMs = 0;
@@ -157,6 +186,7 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
 
   function pushInputStep(el) {
     if (!state.recording || !isEditable(el) || el.tagName === "SELECT") return;
+    if (!el.isConnected || el.disabled) return;
     var v = valueFor(el);
     var last = state.lastValue.get(el);
     if (last === v.value) return; // tidak ada perubahan sejak rekaman terakhir
@@ -164,8 +194,9 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     sendStep({
       type: "input",
       selector: selectorFor(el),
+      kind: kindFor(el),
+      name: nameFor(el),
       value: v.value,
-      url: null,
       masked: v.masked
     });
   }
@@ -216,44 +247,47 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      sendStep(assertionFor(el));
+      var assertStep = assertionFor(el);
+      assertStep.kind = kindFor(el);
+      assertStep.name = nameFor(el);
+      sendStep(assertStep);
       return;
     }
-    var step = {
+    sendStep({
       type: "click",
       selector: selectorFor(el),
-      value: null,
-      url: null
-    };
-    sendStep(step);
+      kind: kindFor(el),
+      name: nameFor(el),
+      value: null
+    });
   }
 
   function onDblClick(e) {
     if (!state.recording || !isTrustedEvent(e) || fromOwnOverlay(e)) return;
     var el = realTarget(e);
     if (!el || el.nodeType !== 1) return;
-    var step = {
+    sendStep({
       type: "click",
       selector: selectorFor(el),
+      kind: kindFor(el),
+      name: nameFor(el),
       value: null,
-      url: null,
       dblclick: true
-    };
-    sendStep(step);
+    });
   }
 
   function onContextMenu(e) {
     if (!state.recording || !isTrustedEvent(e) || fromOwnOverlay(e)) return;
     var el = realTarget(e);
     if (!el || el.nodeType !== 1) return;
-    var step = {
+    sendStep({
       type: "click",
       selector: selectorFor(el),
+      kind: kindFor(el),
+      name: nameFor(el),
       value: null,
-      url: null,
       button: "right"
-    };
-    sendStep(step);
+    });
   }
 
   function onInput(e) {
@@ -269,14 +303,19 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     if (!state.recording || !isTrustedEvent(e) || fromOwnOverlay(e)) return;
     var el = realTarget(e);
     if (!el || !isEditable(el)) return;
+    // Elemen yang sudah dibuang dari DOM / disabled bukan aksi user yang bisa
+    // direplay (form kondisional sering membuang elemen lama saat re-render).
+    if (!el.isConnected || el.disabled) return;
+    if (el.tagName === "INPUT" && String(el.type || "").toLowerCase() === "hidden") return;
 
     if (el.tagName === "SELECT") {
       state.lastValue.set(el, el.value);
       sendStep({
         type: "select",
         selector: selectorFor(el),
-        value: el.value,
-        url: null
+        kind: kindFor(el),
+        name: nameFor(el),
+        value: el.value
       });
       return;
     }
@@ -286,8 +325,9 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
       sendStep({
         type: "check",
         selector: selectorFor(el),
-        value: el.checked ? "checked" : "unchecked",
-        url: null
+        kind: kindFor(el),
+        name: nameFor(el),
+        value: el.checked ? "checked" : "unchecked"
       });
       return;
     }
@@ -323,8 +363,9 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     sendStep({
       type: "key",
       selector: el && el.nodeType === 1 ? selectorFor(el) : null,
-      value: name,
-      url: null
+      kind: el && el.nodeType === 1 ? kindFor(el) : null,
+      name: el && el.nodeType === 1 ? nameFor(el) : null,
+      value: name
     });
   }
 
@@ -352,14 +393,19 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
   }
 
   // ---------------------------------------------------------------------------
-  // Navigasi SPA (pushState/replaceState/popstate) → step navigate
-  // Full page load ditangani background lewat TESTERIA_PAGE_READY.
+  // Navigasi: TIDAK direkam sebagai step.
+  //
+  // SPA (pushState/replaceState/popstate) → route berubah karena FE menanggapi
+  // aksi user yang sudah terekam; menambahkan step URL justru memaksa replay
+  // kembali ke id lama (mis. /wo/123 padahal user sedang di /so/456).
+  // Ganti dokumen penuh → background mencatat penanda TANPA URL (`pageload`)
+  // dari PAGE_READY dokumen baru.
   // ---------------------------------------------------------------------------
 
   /**
    * Flush SEMUA input yang masih menunggu debounce (urutan pendaftaran).
-   * Dipanggil sebelum step navigate direkam dan saat document dibongkar,
-   * supaya ketikan <500 ms sebelum navigasi tidak hilang dari recording.
+   * Dipanggil saat document dibongkar, supaya ketikan <500 ms sebelum
+   * navigasi tidak hilang dari recording.
    */
   function flushAllPending() {
     if (!state.recording) return;
@@ -376,60 +422,11 @@ var recorder = (globalThis.TESTERIA_RECORDER = globalThis.TESTERIA_RECORDER || {
     }
   }
 
-  function currentHref() {
-    try {
-      return location.href;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  function sendNavigate(url) {
-    if (!state.recording) return;
-    if (!/^https?:/i.test(url || "")) return;
-    // Ketikan terakhir sebelum pindah halaman harus masuk recording lebih dulu.
-    flushAllPending();
-    sendStep({ type: "navigate", selector: null, value: null, url: url });
-  }
-
-  function patchHistory() {
-    if (state.spaPatched) return;
-    state.spaPatched = true;
-    var lastHref = currentHref();
-
-    // Navigasi SPA dari kode halaman datang lewat CustomEvent dari patch
-    // MAIN-world (content/spa-main.js, di-inject background). Listener di
-    // ISOLATED world ini menerima URL baru tanpa menyentuh objek halaman.
-    window.addEventListener("__testeria_spa", function (evt) {
-      try {
-        var detail = evt.detail;
-        var url = typeof detail === "string" ? JSON.parse(detail).url : null;
-        if (url && url !== lastHref) {
-          lastHref = url;
-          sendNavigate(url);
-        }
-      } catch (e) {}
-    });
-
-    // popstate tetap bisa diintersep dari isolated world (event DOM menebus
-    // batas world). Fallback ini menangkap back/forward navigation.
-    window.addEventListener("popstate", function () {
-      setTimeout(function () {
-        var now = currentHref();
-        if (now && now !== lastHref) {
-          lastHref = now;
-          sendNavigate(now);
-        }
-      }, 0);
-    });
-  }
-
   // ---------------------------------------------------------------------------
   // Init sekali per halaman
   // ---------------------------------------------------------------------------
   recorder.init = function () {
     installListeners();
-    patchHistory();
   };
   recorder.init();
   recorder.__installed = true;

@@ -70,7 +70,27 @@ async function main() {
     assert.ok(types.includes("input"), "has input steps");
     assert.ok(types.includes("select"), "has select step");
     assert.ok(types.includes("check"), "has check step");
-    assert.ok(types.includes("navigate"), "has SPA navigate step");
+    // URL TIDAK PERNAH jadi step: navigasi SPA (pushState ke /dashboard) hanya
+    // efek dari klik yang terekam — FE yang routing, bukan URL rekaman.
+    assert.ok(
+      !types.includes("navigate") && !types.includes("pageload"),
+      "SPA navigation tidak direkam sebagai step: " + JSON.stringify(types)
+    );
+    for (const s of rec.steps) {
+      assert.ok(!("url" in s), "step tidak punya field url: " + JSON.stringify(s));
+    }
+
+    // Nama manusiawi + sidik jari jenis elemen untuk daftar step.
+    const unameStep = rec.steps.find((s) => s.type === "input" && /username/i.test(s.name || ""));
+    assert.ok(unameStep, "input Username punya nama manusiawi: " + JSON.stringify(rec.steps.map((s) => s.name)));
+    assert.ok(unameStep.kind && unameStep.kind.tag === "INPUT", "input punya kind");
+    const selStep = rec.steps.find((s) => s.type === "select");
+    assert.equal(selStep.name, "Project", "select punya nama label: " + selStep.name);
+    assert.ok(selStep.kind && selStep.kind.tag === "SELECT", "select punya kind");
+    const loginClick = rec.steps.find((s) => s.type === "click" && s.name === "Sign in");
+    assert.ok(loginClick, "klik tombol punya nama teks tombol");
+    const checkStep = rec.steps.find((s) => s.type === "check");
+    assert.ok(checkStep && /remember/i.test(checkStep.name || ""), "check punya nama label: " + (checkStep && checkStep.name));
 
     const pwStep = rec.steps.find((s) => s.type === "input" && s.masked);
     assert.ok(pwStep, "password step exists and masked");
@@ -81,8 +101,10 @@ async function main() {
       rec.steps.length,
       "steps:",
       types.join(","),
-      "| masked password:",
-      JSON.stringify(pwStep.value)
+      "(tanpa URL) | masked password:",
+      JSON.stringify(pwStep.value),
+      "| nama:",
+      JSON.stringify(rec.steps.map((s) => s.name).filter(Boolean))
     );
   } finally {
     await context.close();

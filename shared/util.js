@@ -61,6 +61,7 @@ try {
       recordingTabId: null,    // tab tempat record berjalan
       pendingSteps: [],        // buffer step recording aktif (ditulis per-step)
       startUrl: null,          // URL saat record dimulai
+      lastDocUrl: null,        // URL dokumen terakhir saat recording (transien, bukan step)
       startedAt: 0,            // ms epoch saat record dimulai (untuk ts relatif)
       lastToggleFromContent: 0, // guard anti double-toggle (commands + keydown)
       replay: null             // { recordingId, name, index, total, status, error, stepIndex1Based }
@@ -99,5 +100,101 @@ try {
   T.setRecordings = async function (recordings) {
     await api.storage.local.set({ recordings: recordings });
     return recordings;
+  };
+
+  // ---------------------------------------------------------------------------
+  // Settings (settings.* di storage.local) dengan default aman
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Baca settings + isi default. Default sengaja di sini (satu sumber):
+   *   replayInstant  : false — kursor beranimasi (mode halus) secara default
+   *   replayReuseTab : true  — pakai tab aktif bila domainnya sama
+   */
+  T.getSettings = async function () {
+    var res = await api.storage.local.get("settings");
+    var s = res && res.settings && typeof res.settings === "object" ? res.settings : {};
+    return {
+      replayInstant: s.replayInstant === true,
+      replayReuseTab: s.replayReuseTab !== false
+    };
+  };
+
+  /** Tulis sebagian settings (merge). */
+  T.setSettings = async function (patch) {
+    var res = await api.storage.local.get("settings");
+    var s = Object.assign({}, (res && res.settings) || {}, patch || {});
+    await api.storage.local.set({ settings: s });
+    return s;
+  };
+
+  // ---------------------------------------------------------------------------
+  // Migrasi step: URL TIDAK PERNAH menjadi bagian step.
+  //
+  // Rekaman lama menyimpan navigasi sebagai step `navigate` berisi URL (dengan
+  // id spesifik, mis. /wo/123). Saat replay, URL itu memaksa halaman kembali ke
+  // id lama — padahal navigasi SPA seharusnya datang dari aksi user (FE yang
+  // routing). Migrasi mengubahnya jadi penanda tanpa URL `pageload` yang hanya
+  // berarti "tunggu dokumen baru", dan menghapus `url` dari semua step.
+  // ---------------------------------------------------------------------------
+
+  /** Versi skema step saat ini (dinaikkan bila bentuk step berubah). */
+  T.STEP_SCHEMA_VERSION = 4;
+
+  /** Normalisasi satu step (murni, tanpa I/O). Return step baru. */
+  T.migrateStep = function (step) {
+    if (!step || typeof step !== "object") return step;
+    var s = {};
+    for (var k in step) s[k] = step[k];
+    if (s.type === "navigate") s.type = "pageload";
+    if (s.type === "pageload") {
+      s.selector = null;
+      s.value = null;
+    }
+    // URL tidak pernah menjadi bagian step — hapus permanen.
+    delete s.url;
+    return s;
+  };
+
+  /** Normalisasi array step. */
+  T.migrateSteps = function (steps) {
+    if (!Array.isArray(steps)) return [];
+    var out = [];
+    for (var i = 0; i < steps.length; i++) out.push(T.migrateStep(steps[i]));
+    return out;
+  };
+
+  /** Normalisasi satu recording (steps + field lain apa adanya). */
+  T.migrateRecording = function (rec) {
+    if (!rec || typeof rec !== "object") return rec;
+    var r = {};
+    for (var k in rec) r[k] = rec[k];
+    r.steps = T.migrateSteps(rec.steps);
+    return r;
+  };
+
+  /** Normalisasi daftar recording. */
+  T.migrateRecordings = function (recs) {
+    if (!Array.isArray(recs)) return [];
+    var out = [];
+    for (var i = 0; i < recs.length; i++) out.push(T.migrateRecording(recs[i]));
+    return out;
+  };
+
+  /** Apakah daftar recording masih punya step warisan (navigate / ber-url)? */
+  T.recordingsNeedMigration = function (recs) {
+    if (!Array.isArray(recs)) return false;
+    for (var i = 0; i < recs.length; i++) {
+      var steps = recs[i] && recs[i].steps;
+      if (!Array.isArray(steps)) continue;
+      for (var j = 0; j < steps.length; j++) {
+        var s = steps[j];
+        if (!s || typeof s !== "object") continue;
+        if (s.type === "navigate") return true;
+        if (s.type === "pageload" && s.url) return true;
+        if ("url" in s) return true;
+      }
+    }
+    return false;
   };
 })();

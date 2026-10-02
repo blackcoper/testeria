@@ -13,7 +13,7 @@
     </div>
     <div class="header-actions">
       <button id="import-btn" class="btn btn-ghost" title="Import recording dari file JSON">Import</button>
-      <button id="settings-btn" class="btn btn-ghost" title="Pengaturan replay">⚙</button>
+      <button id="settings-btn" class="btn btn-ghost" title="Setelan replay (kursor & tab)">⚙ Setelan</button>
       <input id="import-file" type="file" accept="application/json,.json" hidden />
     </div>
   </header>
@@ -32,11 +32,19 @@
   </section>
 
   <div id="settings" class="settings" hidden>
+    <div class="set-head">Setelan replay</div>
     <label class="set-row">
       <input type="checkbox" id="set-instant" />
       <span>
-        <strong>Instant mode</strong>
-        <small>Replay tanpa animasi kursor — untuk yang tidak sabar.</small>
+        <strong>Kursor instan (tanpa animasi)</strong>
+        <small>Kursor replay langsung lompat ke elemen, tanpa animasi halus. Bisa diubah juga dari menu F9.</small>
+      </span>
+    </label>
+    <label class="set-row">
+      <input type="checkbox" id="set-reuse" />
+      <span>
+        <strong>Pakai tab aktif bila domain sama</strong>
+        <small>Replay tidak membuka tab baru kalau Anda sudah berada di situs yang sama (mis. /so/456 saat rekaman dibuat di /wo/123).</small>
       </span>
     </label>
   </div>
